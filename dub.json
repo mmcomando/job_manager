@@ -1,0 +1,9 @@
+{
+	"name": "job_manager",
+	"authors": [
+		"pc"
+	],
+	"description": "A minimal D application.",
+	"copyright": "Copyright © 2016, pc",
+	"license": "proprietary"
+}

@@ -1,0 +1,10 @@
+job_manager
+dub.userprefs
+dub.selections.json
+perf.data*
+.dub
+docs.json
+__dummy.html
+*.o
+*.obj
+
