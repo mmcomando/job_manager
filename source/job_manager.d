@@ -1,15 +1,18 @@
 ﻿module job_manager;
+
 import std.datetime;
 import core.atomic;
 import core.thread:Thread,ThreadID,sleep,Fiber;
 import std.algorithm:remove;
 import std.conv:to;
 import core.cpuid:threadsPerCPU;
-import std.stdio;
 import core.sync.mutex;
-import std.functional:toDelegate;
+import std.traits:ReturnType,Parameters;
+import universal_delegate;
 
-uint threadNum;
+import std.stdio:write,writeln,writefln;
+
+uint threadNum;//thread local var
 
 void printException(Exception e, int maxStack = 4) {
 	writeln("Exception message: ", e.msg);
@@ -91,7 +94,6 @@ class JobManager{
 		while(waitingJobs.length>0 || waitingFibers.length>0){
 			Thread.sleep(100.msecs);
 		}
-		stdout.flush;
 		writeln("Wait ended");
 	}
 	void end(){
@@ -111,6 +113,7 @@ class JobManager{
 		}
 		Fiber.yield();
 	}
+
 	void addFiber(FiberData fiberData){
 		synchronized( waitingFibersMutex )
 		{
@@ -128,6 +131,8 @@ class JobManager{
 			atomicOp!"+="(jobsAdded, 1);
 		}
 	}
+
+	
 	void addJobAndWait(JobDelegate del){
 		assertLock(Fiber.getThis() !is null);
 		Counter counter=new Counter;
@@ -144,6 +149,7 @@ class JobManager{
 		Fiber.yield();
 	}
 	void addJobAndWait(JobDelegate[] dels){
+		if(dels.length==0)return;
 		assertLock(Fiber.getThis() !is null);
 		Counter counter=new Counter;
 		Job[] jobs;
@@ -220,6 +226,39 @@ class JobManager{
 			runNextJob();
 		}
 	}
+
+	
+
+	
+	//////////////////////////////////////////////////////////////////////////////////////////
+	//normal delegate,function
+	auto addJobAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
+		auto unDel=makeUniversalDelegate!(Delegate)(del,args);
+		addJobAndWait(&unDel.callAndSaveReturn);
+		static if(!is(ReturnType!Delegate==void)){ 
+			return unDel.result;
+		}
+	}
+	//UniversalDelegate
+	auto addJobAndWait(Delegate)(Delegate[] unDels){
+		JobDelegate[] dels;
+		dels.length=unDels.length;
+		foreach(i,ref del;dels){
+			del=&unDels[i].callAndSaveReturn;
+		}
+		addJobAndWait(dels);
+		alias RetType=ReturnType!(Delegate.deleg);
+		static if(!is(RetType==void)){ 
+			RetType[] results;
+			results.length=unDels.length;
+			foreach(i,ref del;unDels){
+				results[i]=del.result;
+			}
+			return results;
+		}
+	}
+	//////////////////////////////////////////////////////////////////////////////////////////
+
 }
 struct FiberData{
 	Fiber fiber;
@@ -267,7 +306,9 @@ class Job{
 
 
 
-
+import std.functional:toDelegate;
+import std.random:uniform;
+import std.algorithm:sum;
 
 
 
@@ -298,24 +339,38 @@ void testFiberLockingToThread(){
 		assertLock(id==Thread.getThis.id);
 	}
 }
-void randomRecursionJobs(){
-	JobDelegate[] dels=makeTestJobsFrom(&simpleYield,100);
-	jobManager.addJobAndWait(dels);
+
+//returns how many jobs it have spawned
+int randomRecursionJobs(int deepLevel){
+	alias UD=UniversalDelegate!(int function(int));
+	if(deepLevel==0){
+		simpleYield();
+		return 0;
+	}
+	int randNum=uniform(1,10);
+	//randNum=10;
+	UD[] dels;
+	//dels.length=10;
+	dels.length=randNum;
+	foreach(ref d;dels){
+		d=makeUniversalDelegate!(typeof(&randomRecursionJobs))(&randomRecursionJobs,deepLevel-1);
+	}
+	int[] jobsRun=jobManager.addJobAndWait(dels);
+	return sum(jobsRun)+randNum;
+	//JobDelegate[] dels=makeTestJobsFrom(&simpleYield,100);
+	//jobManager.addJobAndWait(dels);
 }
 /// One Job and one Fiber.yield
 void simpleYield(){
 	jobManager.addRunningFiberAndWait();
 }
+
 void testPerformance(){		
 	uint iterations=10;
 	uint packetSize=10_000;
 	StopWatch sw;
 	sw.start();
 	jobManager.resetCounters();
-	writeln(jobManager.jobsAdded);
-	writeln(jobManager.jobsDone);
-	writeln(jobManager.fibersAdded);
-	writeln(jobManager.fibersDone);
 	JobDelegate[] dels=makeTestJobsFrom(&simpleYield,packetSize);
 	foreach(i;0..iterations){
 		jobManager.addJobAndWait(dels);
@@ -324,7 +379,6 @@ void testPerformance(){
 	writeln(jobManager.jobsDone);
 	writeln(jobManager.fibersAdded);
 	writeln(jobManager.fibersDone);
-	jobManager.print=true;
 	assertLock(jobManager.jobsAdded==iterations*packetSize);
 	assertLock(jobManager.jobsDone ==iterations*packetSize);
 	assertLock(jobManager.fibersAdded==iterations*packetSize+iterations);
@@ -340,23 +394,22 @@ unittest{
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
 	}
+
 	void startTest(){
 		JobDelegate[] dels;
+
 		jobManager.addJobAndWait((&testPerformance).toDelegate);
 
 		dels=makeTestJobsFrom(&testFiberLockingToThread,100);
 		jobManager.addJobAndWait(dels);
 
 		jobManager.resetCounters();
-		jobManager.addJobAndWait((&randomRecursionJobs).toDelegate);
-		writeln(jobManager.jobsAdded);
-		writeln(jobManager.jobsDone);
-		writeln(jobManager.fibersAdded);
-		writeln(jobManager.fibersDone);
-		assertLock(jobManager.jobsAdded==101);
-		assertLock(jobManager.jobsDone==101);
-		assertLock(jobManager.fibersAdded==102);
-		assertLock(jobManager.fibersDone==102);
+		int jobsRun=jobManager.addJobAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
+		assertLock(jobManager.jobsAdded==jobsRun+1);
+		assertLock(jobManager.jobsDone==jobsRun+1);
+		assertLock(jobManager.fibersAdded==jobsRun+2);
+		assertLock(jobManager.fibersDone==jobsRun+2);
+
 	}
 	writeln("Start test");
 	jobManager.init(16);
@@ -365,4 +418,5 @@ unittest{
 	jobManager.waitForEnd();
 	jobManager.end();
 	writeln("End test");
+
 }

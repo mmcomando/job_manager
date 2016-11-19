@@ -35,16 +35,16 @@ private template getDelegateArgumentsSaveImpl(args...)
 
 
 auto makeUniversalDelegate(T)(T del,Parameters!(T) args){
-	static assert(Parameters!(T).length==args.length,"Parameters have to match" );
 	return UniversalDelegate!(T)(del,args);
 }
 
 struct UniversalDelegate(Delegate)
 {
 	static assert(is(Delegate == function) || isFunctionPointer!Delegate || isDelegate!Delegate,"Provided type has to be: delegate, function, function pointer" );
-
+	enum hasReturn=!is(ReturnType!Delegate==void);
 	Delegate deleg;
 	getDelegateArgumentsSave!Delegate argumentsSave;//for ref variables pointer is saved
+	static if(hasReturn)ReturnType!Delegate result;
 
 	this(Delegate del,Parameters!Delegate args){
 		static assert(Parameters!(Delegate).length==args.length,"Parameters have to match" );
@@ -70,30 +70,66 @@ struct UniversalDelegate(Delegate)
 			}
 		}
 		// Call
-		ReturnType!Delegate result=deleg(argumentsTmp);
+		static if(hasReturn){
+			ReturnType!Delegate result=deleg(argumentsTmp);
+		}else{
+			deleg(argumentsTmp);
+		}
 		// Assign ref values to theirs orginal location
 		foreach(i,a;argumentsSave){
 			static if(pstc[i] == ParameterStorageClass.ref_){
 				*a=argumentsTmp[i];
 			}
 		}
-		return result;
+		static if(hasReturn)return result;
+	}
+	void callAndSaveReturn(){
+		static if(hasReturn){
+			result=call();
+		}else{
+			call();
+		}
 	}
 }
 
-struct TestTmp{
-	@nogc nothrow int add(int a,int b,ref ulong result) {
-		result=a+b;
-		return  a+b;
+
+@nogc nothrow:
+/// Using Deleagte
+unittest {
+	static struct TestTmp{
+		@nogc nothrow int add(int a,int b,ref ulong result) {
+			result=a+b;
+			return  a+b;
+		}
 	}
-}
-
-
-@nogc nothrow unittest {
 	TestTmp test;
 	ulong returnByRef;
 	auto universalDelegate=makeUniversalDelegate!(typeof(&test.add))(&test.add,2,2,returnByRef);
 	auto result=universalDelegate.call();
 	assert(result==4);
 	assert(returnByRef==4);
+
+}
+
+/// Using Function
+unittest {
+	@nogc nothrow int add(int a,int b,ref ulong result) {
+		result=a+b;
+		return  a+b;
+	}
+	ulong returnByRef;
+	auto universalDelegate=makeUniversalDelegate!(typeof(&add))(&add,2,2,returnByRef);
+	auto result=universalDelegate.call();
+	assert(result==4);
+	assert(returnByRef==4);
+}
+// void with no parameters
+unittest {
+	static int someNum;
+	static @nogc nothrow void add() {
+		someNum=200;
+	}
+	auto universalDelegate=makeUniversalDelegate!(typeof(&add))(&add);
+	universalDelegate.call();
+	assert(someNum==200);
 }
