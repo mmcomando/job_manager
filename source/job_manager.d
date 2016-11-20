@@ -13,7 +13,6 @@ import universal_delegate;
 import std.stdio:write,writeln,writefln;
 
 uint threadNum;//thread local var
-
 void printException(Exception e, int maxStack = 4) {
 	writeln("Exception message: ", e.msg);
 	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line,Thread.getThis.id);
@@ -44,25 +43,29 @@ void assertLock(bool ok,string file=__FILE__,int line=__LINE__){
 
 __gshared JobManager jobManager=new JobManager;
 class JobManager{
+	//for debug
 	shared uint jobsAdded;
 	shared uint jobsDone;
 	shared uint fibersAdded;
 	shared uint fibersDone;
-	shared uint threadNumCounter;
+
+	//jobs managment
 	private Job[] waitingJobs;
-	private FiberData[] waitingFibers;
+	private Mutex waitingJobsMutex;
+	//fibers managment
+	private FiberData[][] waitingFibers;
+	private Mutex[] waitingFibersMutex;
+	//thread managment
 	private Thread[] threadPool;
 	private bool[] threadWorking;
 	bool exit;
-	Mutex waitingFibersMutex;
-	Mutex waitingJobsMutex;
-
+	
 	void resetCounters(){
 		atomicStore(jobsAdded, 0);
 		atomicStore(jobsDone, 0);
 		atomicStore(fibersAdded, 0);
 		atomicStore(fibersDone, 0);
-
+		
 	}
 	void init(){
 		init(threadsPerCPU);
@@ -74,7 +77,9 @@ class JobManager{
 			th.name=i.to!string;
 			threadPool~=th;
 		}
-		waitingFibersMutex=new Mutex;
+		waitingFibers.length=threadsCount;
+		waitingFibersMutex.length=threadsCount;
+		foreach(ref mut;waitingFibersMutex)mut=new Mutex;
 		waitingJobsMutex=new Mutex;
 	}
 	void start(){
@@ -85,15 +90,15 @@ class JobManager{
 	void waitForEnd(){
 		bool wait=true;
 		do{
-			wait=waitingJobs.length>0 || waitingFibers.length>0;
+			wait=waitingJobs.length>0;
+			foreach(fibers;waitingFibers){
+				wait=wait || fibers.length>0;
+			}
 			foreach(yes;threadWorking){
 				wait=wait || yes;
 			}
 			Thread.sleep(100.msecs);
 		}while(wait);
-		while(waitingJobs.length>0 || waitingFibers.length>0){
-			Thread.sleep(100.msecs);
-		}
 		writeln("Wait ended");
 	}
 	void end(){
@@ -102,23 +107,13 @@ class JobManager{
 			thread.join;
 		}
 	}
-	void addRunningFiberAndWait(){
-		assertLock(Fiber.getThis() !is null);
-		auto fiberData=getFiberData();
-		synchronized( waitingFibersMutex )
-		{
-			assertLock(fiberData.fiber.state!=Fiber.State.TERM);
-			waitingFibers.assumeSafeAppend~=fiberData;
-			atomicOp!"+="(fibersAdded, 1);
-		}
-		Fiber.yield();
-	}
-
+	
 	void addFiber(FiberData fiberData){
-		synchronized( waitingFibersMutex )
+		assertLock(waitingFibers.length==threadPool.length);
+		synchronized( waitingFibersMutex[fiberData.threadNum] )
 		{
 			assertLock(fiberData.fiber.state!=Fiber.State.TERM);
-			waitingFibers~=fiberData;
+			waitingFibers[fiberData.threadNum].assumeSafeAppend~=fiberData;
 			atomicOp!"+="(fibersAdded, 1);
 		}
 	}
@@ -131,7 +126,7 @@ class JobManager{
 			atomicOp!"+="(jobsAdded, 1);
 		}
 	}
-
+	
 	
 	void addJobAndWait(JobDelegate del){
 		assertLock(Fiber.getThis() !is null);
@@ -168,39 +163,33 @@ class JobManager{
 		}
 		Fiber.yield();
 	}
-	FiberData popFiber(){
-		ThreadID myPid=Thread.getThis.id;
+	//synchronized by calling function
+	private FiberData popFiber(){
 		FiberData ff;
-		synchronized( waitingFibersMutex )
-		{
-			//	writeln("ll ",waitingFibers.length);
-			foreach(i,fiberData;waitingFibers){
-				if(fiberData.pid==myPid){
-					ff=waitingFibers[i];
-					waitingFibers=waitingFibers.remove(i);
-					atomicOp!"+="(fibersDone, 1);
-					break;
-				}
-			}
+		foreach(i,fiberData;waitingFibers[threadNum]){
+			ff=waitingFibers[threadNum][i];
+			waitingFibers[threadNum]=waitingFibers[threadNum].remove(i);
+			atomicOp!"+="(fibersDone, 1);
+			break;
 		}
-
+		
 		return ff;
 	}
-	Job popJob(){
-		synchronized( waitingJobsMutex )
-		{
-			Job ff=waitingJobs[$-1];
-			waitingJobs=waitingJobs.remove(waitingJobs.length-1);
-			atomicOp!"+="(jobsDone, 1);
-			return ff;
-		}
+	//synchronized by calling function
+	private Job popJob(){
+		Job ff=waitingJobs[$-1];
+		waitingJobs=waitingJobs.remove(waitingJobs.length-1);
+		atomicOp!"+="(jobsDone, 1);
+		return ff;
+
 	}
 	void runNextJob(){
+		static Fiber lastFreeFiber;
 		Fiber fiber;
 		Job job;
-		synchronized( waitingFibersMutex )
+		synchronized( waitingFibersMutex[threadNum] )
 		{
-			if(waitingFibers.length>0){
+			if(waitingFibers[threadNum].length>0){
 				fiber=popFiber().fiber;
 			}
 		}
@@ -208,7 +197,13 @@ class JobManager{
 		{
 			if(fiber is null && waitingJobs.length>0){
 				job=popJob();
-				fiber= new Fiber( &job.run);
+				if(lastFreeFiber is null){
+					fiber= new Fiber( &job.run);
+				}else{
+					fiber=lastFreeFiber;
+					lastFreeFiber=null;
+					fiber.reset(&job.run);
+				}
 			}
 		}
 		if(fiber is null ){
@@ -218,6 +213,9 @@ class JobManager{
 		threadWorking[threadNum]=true;
 		assertLock(fiber.state==Fiber.State.HOLD);
 		fiber.call();	
+		if(fiber.state==Fiber.State.TERM){
+			lastFreeFiber=fiber;
+		}
 	}
 	void threadRunFunction(){
 		threadNum=Thread.getThis.name.to!uint;
@@ -226,12 +224,12 @@ class JobManager{
 			runNextJob();
 		}
 	}
-
 	
-
+	
+	
 	
 	//////////////////////////////////////////////////////////////////////////////////////////
-	//normal delegate,function
+	//normal: delegate,function
 	auto addJobAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 		auto unDel=makeUniversalDelegate!(Delegate)(del,args);
 		addJobAndWait(&unDel.callAndSaveReturn);
@@ -258,19 +256,19 @@ class JobManager{
 		}
 	}
 	//////////////////////////////////////////////////////////////////////////////////////////
-
+	
 }
 struct FiberData{
 	Fiber fiber;
-	ThreadID pid;
+	uint threadNum;
 }
 FiberData getFiberData(){
 	Fiber fiber=Fiber.getThis();
 	assertLock(fiber !is null);
-	return FiberData(fiber,Thread.getThis.id);
+	return FiberData(fiber,threadNum);
 }
 class Counter{
-
+	
 	FiberData waitingFiber;
 	shared uint count;
 	shared uint countUp;
@@ -287,7 +285,7 @@ class Counter{
 		if(ok){
 			jobManager.addFiber(waitingFiber);
 		}
-
+		
 	}
 }
 
@@ -301,7 +299,7 @@ class Job{
 			counter.decrement();
 		}
 	}
-
+	
 }
 
 
@@ -310,14 +308,6 @@ import std.functional:toDelegate;
 import std.random:uniform;
 import std.algorithm:sum;
 
-
-
-
-void async_sleep(uint mseconds){
-	//Thread.sleep(1000.msecs);
-	//Thread.sleep(mseconds.msecs);
-	jobManager.addRunningFiberAndWait();
-}
 
 
 JobDelegate[] makeTestJobsFrom(void function() fn,uint num){
@@ -334,8 +324,10 @@ JobDelegate[] makeTestJobsFrom(JobDelegate deleg,uint num){
 
 void testFiberLockingToThread(){
 	ThreadID id=Thread.getThis.id;
+	auto fiberData=getFiberData();
 	foreach(i;0..1000){
-		jobManager.addRunningFiberAndWait();
+		jobManager.addFiber(fiberData);
+		Fiber.yield();
 		assertLock(id==Thread.getThis.id);
 	}
 }
@@ -357,16 +349,18 @@ int randomRecursionJobs(int deepLevel){
 	}
 	int[] jobsRun=jobManager.addJobAndWait(dels);
 	return sum(jobsRun)+randNum;
-	//JobDelegate[] dels=makeTestJobsFrom(&simpleYield,100);
-	//jobManager.addJobAndWait(dels);
 }
 /// One Job and one Fiber.yield
 void simpleYield(){
-	jobManager.addRunningFiberAndWait();
+	auto fiberData=getFiberData();
+	foreach(i;0..1){
+		jobManager.addFiber(fiberData);
+		Fiber.yield();
+	}
 }
 
 void testPerformance(){		
-	uint iterations=10;
+	uint iterations=100;
 	uint packetSize=10_000;
 	StopWatch sw;
 	sw.start();
@@ -386,30 +380,29 @@ void testPerformance(){
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms]",iterations,packetSize,sw.peek().msecs);
 }
-///main functionality test
-unittest{
+void test(){
 	import core.memory;
 	//GC.disable();
 	version(DigitalMars){
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
 	}
-
+	
 	void startTest(){
 		JobDelegate[] dels;
-
+		
 		jobManager.addJobAndWait((&testPerformance).toDelegate);
-
+		
 		dels=makeTestJobsFrom(&testFiberLockingToThread,100);
 		jobManager.addJobAndWait(dels);
-
+		
 		jobManager.resetCounters();
 		int jobsRun=jobManager.addJobAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 		assertLock(jobManager.jobsAdded==jobsRun+1);
 		assertLock(jobManager.jobsDone==jobsRun+1);
 		assertLock(jobManager.fibersAdded==jobsRun+2);
 		assertLock(jobManager.fibersDone==jobsRun+2);
-
+		
 	}
 	writeln("Start test");
 	jobManager.init(16);
@@ -418,5 +411,9 @@ unittest{
 	jobManager.waitForEnd();
 	jobManager.end();
 	writeln("End test");
-
+}
+///main functionality test
+unittest{
+	test();
+	
 }
