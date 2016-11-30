@@ -1,20 +1,20 @@
-﻿module cache_vector;
+﻿module cache_vector2;
 
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
-import core.atomic;
 import core.sync.mutex;
 import std.stdio:writefln,writeln;
 import job_manager;
 import std.datetime;
 import std.random:uniform,randomShuffle;
 import std.conv:to;
+import core.atomic;
 
-class CacheVector{
+class CacheVectorMM{
 	alias T=int;
 	static  struct DataStruct{ 
-			bool used;
-			T data;		
+		bool used;
+		T data;		
 	}
 	alias LoType=ulong;
 	align (64)shared DataStruct[] dataArray;
@@ -31,11 +31,7 @@ class CacheVector{
 	}
 	void clear(){
 		synchronized(mutex){
-			atomicStore(dataArray,null);
-			int i;
-			while(atomicLoad(loaders)!=0){
-			}
-			atomicStore(dataArray,extendArray(1,dataArray));
+			dataArray=extendArray(1,dataArray);
 		}
 	}
 	T initVar(){
@@ -76,88 +72,34 @@ class CacheVector{
 		//atomicOp!"+="(dataGot, 1);
 		//scope(exit)writefln("okk: %d %d",dataArray.length,atomicLoad(dataGot));
 		//try to find free slot with atmoics
+		synchronized(mutex)
 		{
-			atomicOp!"+="(loaders, cast(LoType)1);
-			scope(exit)atomicOp!"-="(loaders, cast(LoType)1);
-			auto localSlice=atomicLoad(dataArray);
-			uint division=(cast(uint)localSlice.length/threadCount)*thread;
-			//writeln(localSlice);
-			//localSlice=null;
-			foreach(uint i,ref data;localSlice[division..$]){
-				if(data.used==false){
-					bool isEmpty=cas(&data.used,false,true);
-					if(isEmpty){
-						//atomicOp!"+="(localSlice[i].data, 1);
-						//return cast(T)atomicLoad(data.data);
-						return data.data;
-					}
-				}
-			}
-			foreach(uint i,ref data;localSlice[0..division]){
-				if(data.used==false){
-					bool isEmpty=cas(&data.used,false,true);
-					if(isEmpty){
-						//atomicOp!"+="(localSlice[i].data, 1);
-						//return cast(T)atomicLoad(data.data);
-						return data.data;
-					}
-				}
-			}
-		}
-		//try to find free slot with mutex
-		synchronized(mutex){
-			atomicOp!"+="(dataGot, 1);
-			//atomicFence();
-			foreach(uint i,ref data;dataArray){
+			uint division=(cast(uint)dataArray.length/threadCount)*thread;
+			foreach(uint i,ref data;dataArray[division..$]){
 				if(data.used==false){
 					data.used=true;
-					return cast(T)atomicLoad(dataArray[i].data);
+					return data.data;
 				}
 			}
-			//all slots used
-			//extend array
-			auto sliceCopy=dataArray;
-			//stop all getting data without a lock
-			atomicStore(dataArray,null);
-			//wait for all loads
-			int i;
-			while(atomicLoad(loaders)!=0){
+			foreach(uint i,ref data;dataArray[0..division]){
+				if(data.used==false){
+					data.used=true;
+					return data.data;
+				}
 			}
-
-			auto newArray=extendArray(cast(uint)sliceCopy.length*2,sliceCopy);
-			auto freeIndex=sliceCopy.length;
-			newArray[freeIndex].used=true;
-			//atomicOp!"+="(newArray[freeIndex].data, 10000);
-			atomicStore(dataArray,newArray);
-			return cast(T)newArray[freeIndex].data;
+			auto freeIndex=dataArray.length;
+			dataArray=extendArray(cast(uint)dataArray.length*2,dataArray);
+			dataArray[freeIndex].used=true;
+			return cast(T)dataArray[freeIndex].data;
 		}
+		
 	}
 
 	void removeData(T elementToDelete,uint thread=0,uint threadCount=1){
-		//atomicOp!"+="(dataRemoved, 1);
-		{
-			atomicOp!"+="(loaders, cast(LoType)1);
-			scope(exit)atomicOp!"-="(loaders, cast(LoType)1);
-			auto localSlice=atomicLoad(dataArray);
-			uint division=(cast(uint)localSlice.length/threadCount)*thread;
-			foreach(uint i,ref data;localSlice[division..$]){
-				if(data.data==elementToDelete){
-					atomicStore(data.used, false);
-					return;
-				}
-			}
-			foreach(uint i,ref data;localSlice[0..division]){
-				if(data.data==elementToDelete){
-					atomicStore(data.used, false);
-					return;
-				}
-			}
-		}
 		synchronized(mutex){
-			auto localSlice=atomicLoad(dataArray);
-			foreach(uint i,ref data;localSlice){
+			foreach(uint i,ref data;dataArray){
 				if(data.data==elementToDelete){
-					atomicStore(data.used, false);
+					data.used= false;
 					return;
 				}
 			}
@@ -183,7 +125,7 @@ void testMultithreaded(void delegate() func,uint threadsCount=0){
 
 //test extend
 unittest{
-	CacheVector vec=new CacheVector(1);assertLock(vec.dataArray.length==1);
+	CacheVectorMM vec=new CacheVectorMM(1);assertLock(vec.dataArray.length==1);
 	vec.dataArray=vec.extendArray(2,vec.dataArray);assertLock(vec.dataArray.length==2);
 	vec.dataArray=vec.extendArray(3,vec.dataArray);assertLock(vec.dataArray.length==3);
 	vec.dataArray=vec.extendArray(4,vec.dataArray);assertLock(vec.dataArray.length==4);
@@ -197,11 +139,12 @@ unittest{
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
 	}
-	CacheVector vec=new CacheVector(10);
+	CacheVectorMM vec=new CacheVectorMM(10);
 	T var;
 	foreach(i;0..10){
 		var=vec.getData();assertLock(vec.dataArray.length==10);
 	}
+
 	var=vec.getData();assertLock(vec.dataArray.length==20);
 }
 
@@ -212,7 +155,7 @@ void testCV(){
 		registerMemoryErrorHandler();
 	}
 	shared uint sum;
-	CacheVector vec=new CacheVector(1);
+	CacheVectorMM vec=new CacheVectorMM(1);
 	immutable uint firstLoop=10000;
 	immutable uint secondLoop=80;
 	void testGet(){
@@ -301,42 +244,42 @@ void testCV(){
 	 writeln("End test");*/
 
 	/*{ 
-		StopWatch sw;
-		sw.start();
-		vec.dataGot=0;
-		testMultithreaded(&testGet,16);
-		sw.stop();
-		assert(vec.dataGot==sum);
-		  
-		writefln( "G1 Benchmark: %s %s[ms], %s[it/ms]",vec.dataGot,sw.peek().msecs,vec.dataGot/sw.peek().msecs);
-		vec.clear();
-	}
+	 StopWatch sw;
+	 sw.start();
+	 vec.dataGot=0;
+	 testMultithreaded(&testGet,16);
+	 sw.stop();
+	 assert(vec.dataGot==sum);
+	 
+	 writefln( "G1 Benchmark: %s %s[ms], %s[it/ms]",vec.dataGot,sw.peek().msecs,vec.dataGot/sw.peek().msecs);
+	 vec.clear();
+	 }
 
-	{ 
-		StopWatch sw;
-		sw.start();
-		sum=0;
-		vec.dataGot=0;
-		testMultithreaded(&testGet2,16);
-		sw.stop();  
-		assert(vec.dataGot==sum);
+	 { 
+	 StopWatch sw;
+	 sw.start();
+	 sum=0;
+	 vec.dataGot=0;
+	 testMultithreaded(&testGet2,16);
+	 sw.stop();  
+	 assert(vec.dataGot==sum);
 
-		writefln( "G2 Benchmark: %s %s[ms], %s[it/ms]",vec.dataGot,sw.peek().msecs,vec.dataGot/sw.peek().msecs);
-		vec.clear();
-	}
-	{
-		StopWatch sw;
-		sw.start();
-		sum=0;
-		vec.dataGot=0;
-		vec.dataRemoved=0;
-		testMultithreaded(&testRemove,16);
-		sw.stop();  
-		foreach(i,data;vec.dataArray){
-			assertLock(!data.used);
-		}
-		writefln( "R1 Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
-	}*/
+	 writefln( "G2 Benchmark: %s %s[ms], %s[it/ms]",vec.dataGot,sw.peek().msecs,vec.dataGot/sw.peek().msecs);
+	 vec.clear();
+	 }
+	 {
+	 StopWatch sw;
+	 sw.start();
+	 sum=0;
+	 vec.dataGot=0;
+	 vec.dataRemoved=0;
+	 testMultithreaded(&testRemove,16);
+	 sw.stop();  
+	 foreach(i,data;vec.dataArray){
+	 assertLock(!data.used);
+	 }
+	 writefln( "R1 Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
+	 }*/
 	{
 		StopWatch sw;
 		sw.start();
@@ -354,8 +297,9 @@ void testCV(){
 	}
 }
 unittest{
+	writeln("xxx");
 	testCV();
-	//writeln(CacheVector.DataStruct.data.offsetof);
-	//writeln(CacheVector.DataStruct.used.offsetof);
-	//writeln(CacheVector.DataStruct.sizeof);
+	//writeln(CacheVectorMM.DataStruct.data.offsetof);
+	//writeln(CacheVectorMM.DataStruct.used.offsetof);
+	//writeln(CacheVectorMM.DataStruct.sizeof);
 }
