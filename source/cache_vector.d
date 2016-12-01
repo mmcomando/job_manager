@@ -9,9 +9,11 @@ import job_manager;
 import std.datetime;
 import std.random:uniform,randomShuffle;
 import std.conv:to;
+import core.thread;
+import core.memory;
 
 class CacheVector{
-	alias T=int;
+	alias T=Fiber;
 	static  struct DataStruct{ 
 			bool used;
 			T data;		
@@ -22,7 +24,6 @@ class CacheVector{
 	shared uint dataGot;
 	shared uint dataRemoved;
 	Mutex mutex;
-	uint lastElementId;
 
 	this(uint length){
 		assert(length>0);
@@ -39,7 +40,12 @@ class CacheVector{
 		}
 	}
 	T initVar(){
-		return lastElementId++;
+		static void dummy(){}
+		auto fiber=new Fiber(&dummy);
+		fiber.call();
+		atomicOp!"+="(dataGot, 1);
+		assertLock(fiber.state==Fiber.State.TERM);
+		return fiber;
 	}
 	shared(DataStruct[])  extendArray(uint length,shared DataStruct[] oldDataArray){
 		DataStruct[] array;
@@ -52,6 +58,7 @@ class CacheVector{
 		uint oldSize=cast(uint)(DataStruct.sizeof*oldDataArray.length);
 		//writefln("b%s | %s",length,size);
 		DataStruct* memory=cast(DataStruct*)malloc(size);
+		GC.addRange(memory, size);
 		memset(memory,0,size);//TODO can fill only part
 		memcpy(memory,cast(DataStruct*)oldDataArray.ptr,oldSize);
 		array=cast(shared DataStruct[])memory[0 .. length];
@@ -59,15 +66,16 @@ class CacheVector{
 		foreach(ref data;array[oldDataArray.length .. length]){
 			data.data=initVar();
 		}
-		if(array.length<80){
-			//writeln("-");
-			//foreach(a;array){writeln(a.data);}
-		}
+		//if(array.length<80){
+		//	writeln("-",cast(void*)this);
+			//foreach(a;array){writeln("|",cast(void*)a.data);}
+		//}
 
 		//for better crashes
 		if(oldDataArray.length!=0){
 			memset(cast(DataStruct*)oldDataArray.ptr,0,oldSize);// cast(uint)2863311530 -binary 101010
 			free(cast(DataStruct*)oldDataArray.ptr);
+			GC.removeRange(cast(DataStruct*)oldDataArray.ptr);
 		}
 		return cast(shared DataStruct[])array;
 	}
@@ -89,7 +97,7 @@ class CacheVector{
 					if(isEmpty){
 						//atomicOp!"+="(localSlice[i].data, 1);
 						//return cast(T)atomicLoad(data.data);
-						return data.data;
+						return cast(Fiber)data.data;
 					}
 				}
 			}
@@ -99,14 +107,13 @@ class CacheVector{
 					if(isEmpty){
 						//atomicOp!"+="(localSlice[i].data, 1);
 						//return cast(T)atomicLoad(data.data);
-						return data.data;
+						return cast(Fiber)data.data;
 					}
 				}
 			}
 		}
 		//try to find free slot with mutex
 		synchronized(mutex){
-			atomicOp!"+="(dataGot, 1);
 			//atomicFence();
 			foreach(uint i,ref data;dataArray){
 				if(data.used==false){
@@ -141,13 +148,13 @@ class CacheVector{
 			auto localSlice=atomicLoad(dataArray);
 			uint division=(cast(uint)localSlice.length/threadCount)*thread;
 			foreach(uint i,ref data;localSlice[division..$]){
-				if(data.data==elementToDelete){
+				if(cast(Fiber)data.data==elementToDelete){
 					atomicStore(data.used, false);
 					return;
 				}
 			}
 			foreach(uint i,ref data;localSlice[0..division]){
-				if(data.data==elementToDelete){
+				if(cast(Fiber)data.data==elementToDelete){
 					atomicStore(data.used, false);
 					return;
 				}
@@ -156,7 +163,7 @@ class CacheVector{
 		synchronized(mutex){
 			auto localSlice=atomicLoad(dataArray);
 			foreach(uint i,ref data;localSlice){
-				if(data.data==elementToDelete){
+				if(cast(Fiber)data.data==elementToDelete){
 					atomicStore(data.used, false);
 					return;
 				}
@@ -192,7 +199,7 @@ unittest{
 
 //test extend
 unittest{
-	alias T=int;
+	/*alias T=Fiber;
 	version(DigitalMars){
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
@@ -202,9 +209,11 @@ unittest{
 	foreach(i;0..10){
 		var=vec.getData();assertLock(vec.dataArray.length==10);
 	}
-	var=vec.getData();assertLock(vec.dataArray.length==20);
+	var=vec.getData();assertLock(vec.dataArray.length==20);*/
 }
-
+void stupid(){
+	//writeln("stupid");
+}
 //test multithreaded
 void testCV(){
 	version(DigitalMars){
@@ -214,7 +223,7 @@ void testCV(){
 	shared uint sum;
 	CacheVector vec=new CacheVector(1);
 	immutable uint firstLoop=10000;
-	immutable uint secondLoop=80;
+	immutable uint secondLoop=8;
 	void testGet(){
 		uint threadNum=Thread.getThis.name.to!uint;
 		//writeln(threadNum);
@@ -247,7 +256,7 @@ void testCV(){
 	void testRemove(){
 		uint threadNum=Thread.getThis.name.to!uint;
 		uint numGot;
-		int[secondLoop] arr;
+	Fiber[secondLoop] arr;
 		foreach(i;0..firstLoop){
 			uint rand=secondLoop;
 			foreach(j;0..rand){
@@ -264,11 +273,19 @@ void testCV(){
 	void testRemove2(){
 		uint threadNum=Thread.getThis.name.to!uint;
 		uint numGot;
-		int[secondLoop] arr;
+		Fiber[secondLoop] arr;
+		int[] ddd;
 		foreach(i;0..firstLoop){
 			uint rand=secondLoop;
 			foreach(j;0..rand){
 				arr.ptr[j]=vec.getData(threadNum,16);
+			}
+			foreach(j;0..rand){
+				foreach(k;0..100){
+					ddd~=1;
+				arr.ptr[j].reset(&stupid);
+				arr.ptr[j].call();
+				}
 			}
 			randomShuffle(arr[0..rand]);
 			foreach(j;0..rand){
@@ -338,6 +355,7 @@ void testCV(){
 		writefln( "R1 Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
 	}*/
 	{
+		//GC.disable;
 		StopWatch sw;
 		sw.start();
 		sum=0;
@@ -346,6 +364,7 @@ void testCV(){
 		testMultithreaded(&testRemove2,16);
 		sw.stop();  
 		foreach(i,data;vec.dataArray){
+			writeln(cast(void*)data.data);
 			assertLock(!data.used);
 		}
 		writeln(vec.dataGot);
@@ -354,7 +373,7 @@ void testCV(){
 	}
 }
 unittest{
-	testCV();
+	//testCV();
 	//writeln(CacheVector.DataStruct.data.offsetof);
 	//writeln(CacheVector.DataStruct.used.offsetof);
 	//writeln(CacheVector.DataStruct.sizeof);
