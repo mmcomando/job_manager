@@ -11,6 +11,7 @@ import std.traits:ReturnType,Parameters,TemplateOf;
 import multithreaded_utils;
 import universal_delegate;
 import cache_vector;
+import job_vector;
 
 import std.stdio:write,writeln,writefln;
 
@@ -35,6 +36,8 @@ void printStack(){
 }
 
 
+alias JobVector=LowLockQueue!(Job);
+//alias JobVector=LockedVector!(Job);
 
 
 uint jobManagerThreadNum;//thread local var
@@ -66,8 +69,9 @@ class JobManager{
 	CacheVector fibersCache;
 
 	//jobs managment
-	private Job[] waitingJobs;
-	private Mutex waitingJobsMutex;
+	//private Job[] waitingJobs;
+	private JobVector waitingJobs;
+	//private Mutex waitingJobsMutex;
 	//fibers managment
 	private FiberData[][] waitingFibers;
 	private Mutex[] waitingFibersMutex;
@@ -89,7 +93,8 @@ class JobManager{
 		waitingFibers.length=threadsCount;
 		waitingFibersMutex.length=threadsCount;
 		foreach(ref mut;waitingFibersMutex)mut=new Mutex;
-		waitingJobsMutex=new Mutex;
+		//waitingJobsMutex=new Mutex;
+		waitingJobs=new JobVector();
 		fibersCache=new CacheVector(threadsCount);
 	}
 	void start(){
@@ -101,7 +106,8 @@ class JobManager{
 	void waitForEnd(){
 		bool wait=true;
 		do{
-			wait=waitingJobs.length>0;
+			wait=!waitingJobs.empty;
+			//writeln(waitingJobs.empty);
 			foreach(fibers;waitingFibers){
 				wait=wait || fibers.length>0;
 			}
@@ -132,9 +138,9 @@ class JobManager{
 	void addJob(JobDelegate del){
 		Job job=new Job;
 		job.del=del;
-		synchronized( waitingJobsMutex )
+		//synchronized( waitingJobsMutex )
 		{
-			waitingJobs~=job;
+			waitingJobs.add(job);
 			debugHelper.jobsAddedUp();
 		}
 	}
@@ -148,9 +154,9 @@ class JobManager{
 		counter.count=1;
 		job.counter=counter;
 		counter.waitingFiber=getFiberData();
-		synchronized( waitingJobsMutex )
+		//synchronized( waitingJobsMutex )
 		{
-			waitingJobs~=job;
+			waitingJobs.add(job);
 			debugHelper.jobsAddedUp();
 		}
 		Fiber.yield();
@@ -163,13 +169,13 @@ class JobManager{
 		jobs.length=dels.length;
 		counter.count=cast(uint)dels.length;
 		counter.waitingFiber=getFiberData();
-		synchronized( waitingJobsMutex )
+		//synchronized( waitingJobsMutex )
 		{
 			foreach(i;0..dels.length){
 				jobs[i]=new Job;
 				jobs[i].del=dels[i];
 				jobs[i].counter=counter;
-				waitingJobs~=jobs[i];
+				waitingJobs.add(jobs[i]);
 				debugHelper.jobsAddedUp();
 			}
 		}
@@ -189,11 +195,15 @@ class JobManager{
 	}
 	//synchronized by caller
 	private Job popJob(){
-		if(waitingJobs.length==0)return null;
+		/*if(waitingJobs.length==0)return null;
 		Job ff=waitingJobs[$-1];
 		waitingJobs=waitingJobs.remove(waitingJobs.length-1);
 		debugHelper.jobsDoneUp();
-		return ff;
+		return ff;*/
+		Job job=waitingJobs.pop();
+		if(job is null)return null;
+		debugHelper.jobsDoneUp();
+		return job;
 	}
 	void runNextJob(){
 		static Fiber lastFreeFiber;//1 element tls cache
@@ -207,8 +217,9 @@ class JobManager{
 			}
 		}
 		//no fiber try to get new job
-		if(fiber is null && waitingJobs.length>0){
-			synchronized( waitingJobsMutex ){
+		if(fiber is null && !waitingJobs.empty){
+			//synchronized( waitingJobsMutex )
+			{
 				Job job;
 				job=popJob();
 				if(job !is null){
@@ -437,6 +448,8 @@ void test(){
 	writeln("Start JobManager test");
 	jobManager.init(16);
 	jobManager.addJob((&startTest).toDelegate);
+	writeln(jobManager.waitingJobs.classinfo.init.length);
+	writeln(jobManager.waitingJobs.classinfo.init.length);
 	jobManager.start();
 	jobManager.waitForEnd();
 	jobManager.end();

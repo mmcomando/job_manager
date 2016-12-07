@@ -5,6 +5,6 @@ void main()
 {
 	version(unittest){}else{
 		test();
-		testCV();
+		//testCV();
 	}
 }
