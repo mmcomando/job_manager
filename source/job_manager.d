@@ -36,7 +36,7 @@ void printStack(){
 }
 
 
-alias JobVector=LowLockQueue!(Job);
+alias JobVector=LowLockQueue!(Job*);
 //alias JobVector=LockedVector!(Job);
 
 
@@ -67,6 +67,9 @@ class JobManager{
 	}
 	DebugHelper debugHelper;
 	CacheVector fibersCache;
+
+	BucketAllocator!(54) counterAllocator;
+	BucketAllocator!(54) jobAllocator;
 
 	//jobs managment
 	//private Job[] waitingJobs;
@@ -136,7 +139,7 @@ class JobManager{
 		}
 	}
 	void addJob(JobDelegate del){
-		Job job=new Job;
+		Job* job=new Job;
 		job.del=del;
 		//synchronized( waitingJobsMutex )
 		{
@@ -149,7 +152,7 @@ class JobManager{
 	void addJobAndWait(JobDelegate del){
 		assertLock(Fiber.getThis() !is null);
 		Counter counter=new Counter;
-		Job job=new Job;
+		Job* job=new Job;
 		job.del=del;
 		counter.count=1;
 		job.counter=counter;
@@ -165,7 +168,7 @@ class JobManager{
 		if(dels.length==0)return;
 		assertLock(Fiber.getThis() !is null);
 		Counter counter=new Counter;
-		Job[] jobs;
+		Job*[] jobs;
 		jobs.length=dels.length;
 		counter.count=cast(uint)dels.length;
 		counter.waitingFiber=getFiberData();
@@ -194,13 +197,13 @@ class JobManager{
 		return ff;
 	}
 	//synchronized by caller
-	private Job popJob(){
+	private Job* popJob(){
 		/*if(waitingJobs.length==0)return null;
 		Job ff=waitingJobs[$-1];
 		waitingJobs=waitingJobs.remove(waitingJobs.length-1);
 		debugHelper.jobsDoneUp();
 		return ff;*/
-		Job job=waitingJobs.pop();
+		Job* job=waitingJobs.pop();
 		if(job is null)return null;
 		debugHelper.jobsDoneUp();
 		return job;
@@ -220,7 +223,7 @@ class JobManager{
 		if(fiber is null && !waitingJobs.empty){
 			//synchronized( waitingJobsMutex )
 			{
-				Job job;
+				Job* job;
 				job=popJob();
 				if(job !is null){
 					if(useCache){
@@ -329,8 +332,15 @@ class Counter{
 	}
 }
 
+struct UniversalJob{
+	alias Delegate=int delegate(ref int,string,ulong);
+	alias UnDelegate=UniversalDelegate!Delegate;
+	Job job;
+	UnDelegate unDel;
+}
+
 alias JobDelegate=void delegate();
-class Job{
+struct Job{
 	JobDelegate del;
 	Counter counter;
 	void run(){	

@@ -6,12 +6,17 @@ import core.atomic;
 import core.sync.mutex;
 import core.thread:Fiber,Thread;
 import core.memory;
+import std.conv:emplace;
+import core.memory;
 
 import multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
 //By Herb Sutter
 //ponoć
+
 class LowLockQueue(T) {
+	alias Allocator=BucketAllocator!(Node.sizeof);
+	Allocator allocator;
 	//alias T=void*;
 private:
 	static struct Node {
@@ -37,10 +42,14 @@ private:
 
 public:
 	this() {
+		//allocator=new Allocator();
+		//void[] memory=allocator.allocate();
+		//first = last =  memory.emplace!(Node)( null );
 		first = last = new Node( null );
 		producerLock = consumerLock = false;
 	}
 	~this() {
+
 		/*while( first != null ) {   		// release the list
 			Node* tmp = first;
 			first = tmp.next;
@@ -56,7 +65,11 @@ public:
 
 	
 	void add( T  t ) {
-		Node* tmp = new Node( t );
+		//void[] memory=allocator.allocate();
+		//GC.addRange(memory.ptr,memory.length);
+		//Node* tmp = memory.emplace!(Node)( t );
+		//assertLock(memory.ptr==tmp);
+		Node* tmp = new Node(t);
 		while( !cas(&producerLock,false,true ))
 		{ } 	// acquire exclusivity
 		last.next = tmp;		 		// publish to consumers
@@ -77,11 +90,13 @@ public:
 			T result = theNext.value;	 	       	// take it out
 			theNext.value = null; 	       	// of the Node
 			first = theNext;		 	       	// swing first forward
-			atomicStore(consumerLock,false);	       	// release exclusivity			
+			atomicStore(consumerLock,false);	       	// release exclusivity		
 
 			//result = *val;  		// now copy it back
 			//delete val;  		// clean up the value
 			//delete theFirst;  		// and the old dummy
+			//GC.removeRange(theFirst);
+			//allocator.deallocate(cast(void[])theFirst[0..1]);
 			return result;	 		// and report success
 		}
 

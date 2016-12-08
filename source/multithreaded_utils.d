@@ -40,20 +40,21 @@ import core.sync.mutex;
 import  std.random:uniform;
 
 
-
-class BucketAllocator{
+struct Bucket{
+	union{
+		void[64] data;
+		Bucket* next;
+	}
+}
+class BucketAllocator(uint bucketSize){
+	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
 
-	enum bucketSize=64;
+	
 	enum bucketsNum=32;
 	Mutex mutex;
 
-	static struct Bucket{
-		union{
-			void[bucketSize] data;
-			Bucket* next;
-		}
-	}
+
 	static struct BucketsArray{
 		Bucket[bucketsNum] buckets;
 		shared Bucket* empty;
@@ -119,24 +120,27 @@ class BucketAllocator{
 		}
 
 	}
+	uint ccc;
+	uint ncccc;
 	void deallocate(void[] data){
-		foreach(bucketsArray;bucketArrays){
-			foreach(ref bucket;bucketsArray.buckets){
-				assert(&bucket==bucket.data.ptr);
-				if(bucket.data.ptr==data.ptr){
-					shared Bucket* emptyBucket;
-
-					do{
-					BACK:
-						emptyBucket=atomicLoad(bucketsArray.empty);
-						if(emptyBucket==invalidValue){
-							goto BACK;
-						}
-						bucket.next=emptyBucket;
-					}while(!cas(&bucketsArray.empty,emptyBucket,&bucket));
-					return;
-				}
+		foreach(i,bucketsArray;bucketArrays){
+			if(data.ptr>=bucketsArray.buckets.ptr+bucketsNum || data.ptr<bucketsArray.buckets.ptr){
+				ccc++;
+				continue;
 			}
+			ncccc++;
+			shared Bucket* bucket=cast(shared Bucket*)data.ptr;
+			shared Bucket* emptyBucket;
+
+			do{
+			BACK:
+				emptyBucket=atomicLoad(bucketsArray.empty);
+				if(emptyBucket==invalidValue){
+					goto BACK;
+				}
+				bucket.next=emptyBucket;
+			}while(!cas(&bucketsArray.empty,emptyBucket,bucket));
+			return;
 		}
 		assert(0);
 	}
@@ -150,31 +154,30 @@ class BucketAllocator{
 }
 
 unittest{
-	/*BucketAllocator allocator=new BucketAllocator;
-	 foreach(k;0..123){
-	 void[][] memories;
-	 assert(allocator.bucketArrays[0].freeSlots==32);
-	 foreach(i;0..32){
-	 memories~=allocator.allocate();
-	 }
-	 assert(allocator.bucketArrays[0].freeSlots==0);
-	 foreach(i;0..32){
-	 memories~=allocator.allocate();
-	 assert(allocator.bucketArrays.length==2);
-	 }
-	 foreach(m;memories){
-	 allocator.deallocate(m);
-	 }
-	 }*/
+	BucketAllocator!(64) allocator=new BucketAllocator!(64);
+	foreach(k;0..123){
+		void[][] memories;
+		assert(allocator.bucketArrays[0].freeSlots==32);
+		foreach(i;0..32){
+			memories~=allocator.allocate();
+		}
+		assert(allocator.bucketArrays[0].freeSlots==0);
+		foreach(i;0..32){
+			memories~=allocator.allocate();
+			assert(allocator.bucketArrays.length==2);
+		}
+		foreach(i,m;memories){
+			allocator.deallocate(m);
+		}
+	}
 
 }
 import std.datetime;
-
-unittest{
-	BucketAllocator allocator=new BucketAllocator;
+void testAL(){
+	BucketAllocator!(64) allocator=new BucketAllocator!(64);
 	shared ulong sum;
 	void test(){
-		foreach(k;0..10000){
+		foreach(k;0..100){
 			void[][] memories;
 			foreach(i;0..uniform(130,140)){
 				memories~=allocator.allocate();
@@ -192,12 +195,14 @@ unittest{
 	}
 	StopWatch sw;
 	sw.start();
-	testMultithreaded(&test,k+1);
+	testMultithreaded(&test,16);
 	sw.stop();  	
 	writefln( "Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
-
-	//writeln(allocator.usedSlots);
+	
+	//writeln(allocator.ccc);
+	//writeln(allocator.ncccc);
 	assert(allocator.usedSlots==0);
-	//testMultithreaded(&testAdd,16);
-	//	assert(allocator.usedSlots==128*16);
+}
+unittest{
+	testAL();
 }
