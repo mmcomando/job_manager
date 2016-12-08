@@ -30,4 +30,174 @@ void testMultithreaded(void delegate() func,uint threadsCount=0){
 	foreach(thread;threadPool){
 		thread.join();
 	}
+
+}
+
+
+
+import core.atomic;
+import core.sync.mutex;
+import  std.random:uniform;
+
+
+
+class BucketAllocator{
+	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
+
+	enum bucketSize=64;
+	enum bucketsNum=32;
+	Mutex mutex;
+
+	static struct Bucket{
+		union{
+			void[bucketSize] data;
+			Bucket* next;
+		}
+	}
+	static struct BucketsArray{
+		Bucket[bucketsNum] buckets;
+		shared Bucket* empty;
+		void init() shared {
+			shared Bucket* last;
+			foreach(i,ref bucket;buckets){
+				bucket.next=last;
+				last=&bucket;
+			}
+			empty=cast(shared Bucket*)last;
+		}
+		uint freeSlots()shared {
+			uint i;
+			shared Bucket* slot=empty;
+			while(slot !is null){
+				i++;
+				slot=slot.next;
+			}
+			return i;
+		}
+		uint usedSlots()shared {
+			return bucketsNum-freeSlots;
+		}
+	}
+
+	shared BucketsArray*[] bucketArrays;
+
+	this(){
+		mutex=new Mutex;
+		extend();
+	}
+	void extend(){
+		shared BucketsArray* arr=new shared BucketsArray();
+		(*arr).init();
+		bucketArrays~=arr;
+	}
+
+	void[] allocate(){
+	FF:foreach(bucketsArray;bucketArrays){
+			if(bucketsArray.empty is null)continue;
+
+			shared Bucket* emptyBucket;
+			do{
+			BACK:
+				emptyBucket=atomicLoad(bucketsArray.empty);
+				if(emptyBucket is null){
+					continue FF;
+				}
+				if(emptyBucket==invalidValue){
+					goto BACK;
+				}
+			}while(!cas(&bucketsArray.empty,emptyBucket,invalidValue));
+			atomicStore(bucketsArray.empty,emptyBucket.next);
+			return cast(void[])emptyBucket.data;
+		}
+		//assert(0);
+		synchronized(mutex){
+			extend();
+			auto bucketsArray=bucketArrays[$-1];
+			shared Bucket* empty=bucketsArray.empty;
+			bucketsArray.empty=(*bucketsArray.empty).next;
+			return 	cast(void[])empty.data;		
+		}
+
+	}
+	void deallocate(void[] data){
+		foreach(bucketsArray;bucketArrays){
+			foreach(ref bucket;bucketsArray.buckets){
+				assert(&bucket==bucket.data.ptr);
+				if(bucket.data.ptr==data.ptr){
+					shared Bucket* emptyBucket;
+
+					do{
+					BACK:
+						emptyBucket=atomicLoad(bucketsArray.empty);
+						if(emptyBucket==invalidValue){
+							goto BACK;
+						}
+						bucket.next=emptyBucket;
+					}while(!cas(&bucketsArray.empty,emptyBucket,&bucket));
+					return;
+				}
+			}
+		}
+		assert(0);
+	}
+
+	uint usedSlots(){
+		uint sum;
+		foreach(bucketsArray;bucketArrays)sum+=bucketsArray.usedSlots;
+		return sum;
+
+	}
+}
+
+unittest{
+	/*BucketAllocator allocator=new BucketAllocator;
+	 foreach(k;0..123){
+	 void[][] memories;
+	 assert(allocator.bucketArrays[0].freeSlots==32);
+	 foreach(i;0..32){
+	 memories~=allocator.allocate();
+	 }
+	 assert(allocator.bucketArrays[0].freeSlots==0);
+	 foreach(i;0..32){
+	 memories~=allocator.allocate();
+	 assert(allocator.bucketArrays.length==2);
+	 }
+	 foreach(m;memories){
+	 allocator.deallocate(m);
+	 }
+	 }*/
+
+}
+import std.datetime;
+
+unittest{
+	BucketAllocator allocator=new BucketAllocator;
+	shared ulong sum;
+	void test(){
+		foreach(k;0..10000){
+			void[][] memories;
+			foreach(i;0..uniform(130,140)){
+				memories~=allocator.allocate();
+			}
+			foreach(m;memories){
+				allocator.deallocate(m);
+			}
+			atomicOp!"+="(sum,memories.length);
+		}
+	}
+	void testAdd(){
+		foreach(i;0..128){
+			allocator.allocate();
+		}
+	}
+	StopWatch sw;
+	sw.start();
+	testMultithreaded(&test,k+1);
+	sw.stop();  	
+	writefln( "Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
+
+	//writeln(allocator.usedSlots);
+	assert(allocator.usedSlots==0);
+	//testMultithreaded(&testAdd,16);
+	//	assert(allocator.usedSlots==128*16);
 }
