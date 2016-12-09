@@ -4,6 +4,8 @@ import core.thread;
 import core.cpuid:threadsPerCPU;
 import std.stdio:writeln,writefln;
 import std.conv:to;
+import std.random:uniform;
+import job_manager;
 //simple assert stopped/killed?? thread and printed nothing so not very useful
 void assertLock(bool ok,string file=__FILE__,int line=__LINE__){
 	if(!ok){
@@ -12,6 +14,13 @@ void assertLock(bool ok,string file=__FILE__,int line=__LINE__){
 			Thread.sleep(1000.msecs);
 		}
 	}
+}
+uint dummyNum=0;
+uint dummySum;
+void dummyLoad(){
+	//foreach(i;0..jobManagerThreadNum*dummyNum){
+	//	dummySum+=uniform(0,12331);
+	//}
 }
 //useful for testing if function is safe in multthreated enviroment
 //name can be used as id
@@ -33,25 +42,33 @@ void testMultithreaded(void delegate() func,uint threadsCount=0){
 
 }
 
-
+unittest{
+	int[] a=[];
+	/*writeln(a.iterateWithRandom);
+	writeln(a.iterateWithRandom);
+	writeln(a.iterateWithRandom);
+	writeln(a.iterateWithRandom);
+	writeln(a.iterateWithRandom);
+	writeln(a.iterateWithRandom);*/
+}
 
 import core.atomic;
 import core.sync.mutex;
 import  std.random:uniform;
 
 
-struct Bucket{
-	union{
-		void[64] data;
-		Bucket* next;
-	}
-}
+
 class BucketAllocator(uint bucketSize){
 	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
 
-	
-	enum bucketsNum=32;
+	struct Bucket{
+		union{
+			void[bucketSize] data;
+			Bucket* next;
+		}
+	}
+	enum bucketsNum=128;
 	Mutex mutex;
 
 
@@ -120,15 +137,13 @@ class BucketAllocator(uint bucketSize){
 		}
 
 	}
-	uint ccc;
-	uint ncccc;
 	void deallocate(void[] data){
-		foreach(i,bucketsArray;bucketArrays){
-			if(data.ptr>=bucketsArray.buckets.ptr+bucketsNum || data.ptr<bucketsArray.buckets.ptr){
-				ccc++;
+		foreach(bucketsArray;bucketArrays){
+			auto ptr=bucketsArray.buckets.ptr;
+			auto dptr=data.ptr;
+			if(dptr>=ptr+bucketsNum || dptr<ptr){
 				continue;
 			}
-			ncccc++;
 			shared Bucket* bucket=cast(shared Bucket*)data.ptr;
 			shared Bucket* emptyBucket;
 
@@ -142,7 +157,7 @@ class BucketAllocator(uint bucketSize){
 			}while(!cas(&bucketsArray.empty,emptyBucket,bucket));
 			return;
 		}
-		assert(0);
+		assertLock(0);
 	}
 
 	uint usedSlots(){
@@ -153,16 +168,18 @@ class BucketAllocator(uint bucketSize){
 	}
 }
 
+
+
 unittest{
 	BucketAllocator!(64) allocator=new BucketAllocator!(64);
 	foreach(k;0..123){
 		void[][] memories;
-		assert(allocator.bucketArrays[0].freeSlots==32);
-		foreach(i;0..32){
+		assert(allocator.bucketArrays[0].freeSlots==allocator.bucketsNum);
+		foreach(i;0..allocator.bucketsNum){
 			memories~=allocator.allocate();
 		}
 		assert(allocator.bucketArrays[0].freeSlots==0);
-		foreach(i;0..32){
+		foreach(i;0..allocator.bucketsNum){
 			memories~=allocator.allocate();
 			assert(allocator.bucketArrays.length==2);
 		}
@@ -198,11 +215,9 @@ void testAL(){
 	testMultithreaded(&test,16);
 	sw.stop();  	
 	writefln( "Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
-	
-	//writeln(allocator.ccc);
-	//writeln(allocator.ncccc);
+
 	assert(allocator.usedSlots==0);
 }
 unittest{
-	testAL();
+	//testAL();
 }

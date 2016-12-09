@@ -12,11 +12,9 @@ import core.memory;
 import multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
 //By Herb Sutter
-//ponoć
 
 class LowLockQueue(T) {
-	alias Allocator=BucketAllocator!(Node.sizeof);
-	Allocator allocator;
+
 	//alias T=void*;
 private:
 	static struct Node {
@@ -38,26 +36,24 @@ private:
 	// shared among producers
 	align (64) shared bool producerLock;//atomic
 
-	
-
+	enum useAllocator=true;
+	static if(useAllocator){
+		alias Allocator=BucketAllocator!(Node.sizeof);
+		Allocator allocator;
+	}
 public:
 	this() {
-		//allocator=new Allocator();
-		//void[] memory=allocator.allocate();
-		//first = last =  memory.emplace!(Node)( null );
-		first = last = new Node( null );
+		static if(useAllocator){
+			allocator=new Allocator();
+			void[] memory=allocator.allocate();
+			first = last =  memory.emplace!(Node)( T.init );
+		}else{
+			first = last = new Node( T.init );
+		}
 		producerLock = consumerLock = false;
 	}
-	~this() {
 
-		/*while( first != null ) {   		// release the list
-			Node* tmp = first;
-			first = tmp.next;
-			//delete tmp.value; 		// no-op if null
-			//delete tmp;
-		}*/
-	}
-
+	
 	bool empty(){
 		return (first.next == null); 
 	}
@@ -65,43 +61,76 @@ public:
 
 	
 	void add( T  t ) {
-		//void[] memory=allocator.allocate();
-		//GC.addRange(memory.ptr,memory.length);
-		//Node* tmp = memory.emplace!(Node)( t );
-		//assertLock(memory.ptr==tmp);
-		Node* tmp = new Node(t);
-		while( !cas(&producerLock,false,true ))
-		{ } 	// acquire exclusivity
+		static if(useAllocator){
+			void[] memory=allocator.allocate();
+			Node* tmp = memory.emplace!(Node)( t );
+		}else{
+			//assertLock(memory.ptr==tmp);
+			Node* tmp = new Node(t);
+		}
+		while( !cas(&producerLock,false,true )){ } 	// acquire exclusivity
 		last.next = tmp;		 		// publish to consumers
 		last = tmp;		 		// swing last forward
 		atomicStore(producerLock,false);		// release exclusivity
 	}
+	void add( T[]  t ) {
+
+		Node* firstInChain;
+		Node* lastInChain;
+		static if(useAllocator){
+			void[] memory=allocator.allocate();
+			Node* tmp = memory.emplace!(Node)( t[0] );
+			firstInChain=tmp;
+			lastInChain=tmp;
+			foreach(n;1..t.length){
+				memory=allocator.allocate();
+				tmp = memory.emplace!(Node)( t[n] );
+				lastInChain.next=tmp;
+				lastInChain=tmp;
+			}
+		}else{
+			Node*[] tmp;
+			tmp.length=t.length;
+			foreach(i,ref n;tmp)n= new Node(t[i]);
+			Node* next;
+			foreach_reverse(n;tmp){
+				n.next=next;
+				next=n;
+			}
+			firstInChain=tmp[0];
+			lastInChain=tmp[$-1];
+			
+		}
+		dummyLoad();
+		while( !cas(&producerLock,false,true )){ } 	// acquire exclusivity
+		last.next = firstInChain;		 		// publish to consumers
+		last = lastInChain;		 		// swing last forward
+		atomicStore(producerLock,false);		// release exclusivity
+	}
 	
 
-
+	
 	T pop(  ) {
-		while( !cas(&consumerLock,false,true ) ) 
-		{ }	 // acquire exclusivity
+		dummyLoad();
+		while( !cas(&consumerLock,false,true ) ) { }	 // acquire exclusivity
 
 		
 		Node* theFirst = first;
 		Node* theNext = first.next;
 		if( theNext != null ) { // if queue is nonempty
 			T result = theNext.value;	 	       	// take it out
-			theNext.value = null; 	       	// of the Node
+			theNext.value = T.init; 	       	// of the Node
 			first = theNext;		 	       	// swing first forward
 			atomicStore(consumerLock,false);	       	// release exclusivity		
 
-			//result = *val;  		// now copy it back
-			//delete val;  		// clean up the value
-			//delete theFirst;  		// and the old dummy
-			//GC.removeRange(theFirst);
-			//allocator.deallocate(cast(void[])theFirst[0..1]);
+			static if(useAllocator){
+				allocator.deallocate(cast(void[])theFirst[0..1]);
+			}
 			return result;	 		// and report success
 		}
 
 		atomicStore(consumerLock,false);       	// release exclusivity
-		return null; 	// report queue was empty
+		return T.init; 	// report queue was empty
 	}
 }
 
@@ -117,8 +146,7 @@ import std.algorithm:remove;
 
 
 class LockedVector(T){
-	//alias T=void*;
-	Mutex mutex;
+	align(64)Mutex mutex;
 	T[] array;
 public:
 	this(){
@@ -126,21 +154,17 @@ public:
 	}
 	bool empty(){
 		return(array.length==0);
-	}
-	
-	
+	}	
 	
 	void add( T  t ) {
 		synchronized( mutex ){
-			array~=t;
+			array.assumeSafeAppend~=t;
 		}
-	}
-	
-	
+	}	
 	
 	T pop(  ) {
 		synchronized( mutex ){
-			if(array.length==0)return null;
+			if(array.length==0)return T.init;
 			T obj=array[$-1];
 			array=array.remove(array.length-1);
 			return obj;

@@ -16,6 +16,7 @@ import job_vector;
 import std.stdio:write,writeln,writefln;
 
 
+
 void printException(Exception e, int maxStack = 4) {
 	writeln("Exception message: ", e.msg);
 	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line,Thread.getThis.id);
@@ -37,17 +38,20 @@ void printStack(){
 
 
 alias JobVector=LowLockQueue!(Job*);
-//alias JobVector=LockedVector!(Job);
+//alias JobVector=LockedVector!(Job*);
+
+//alias FiberVector=LowLockQueue!(FiberData);
+alias FiberVector=LockedVector!(FiberData);
 
 
 uint jobManagerThreadNum;//thread local var
 __gshared JobManager jobManager=new JobManager;
 class JobManager{
 	struct DebugHelper{
-		shared uint jobsAdded;
-		shared uint jobsDone;
-		shared uint fibersAdded;
-		shared uint fibersDone;
+		align(64)shared uint jobsAdded;
+		align(64)shared uint jobsDone;
+		align(64)shared uint fibersAdded;
+		align(64)shared uint fibersDone;
 		
 		void resetCounters(){
 			{
@@ -67,17 +71,14 @@ class JobManager{
 	}
 	DebugHelper debugHelper;
 	CacheVector fibersCache;
+	//enum CounterSize=__traits( classInstanceSize, Counter);
+	//BucketAllocator!(CounterSize) counterAllocator;
 
-	BucketAllocator!(54) counterAllocator;
-	BucketAllocator!(54) jobAllocator;
-
+	
 	//jobs managment
-	//private Job[] waitingJobs;
 	private JobVector waitingJobs;
-	//private Mutex waitingJobsMutex;
 	//fibers managment
-	private FiberData[][] waitingFibers;
-	private Mutex[] waitingFibersMutex;
+	private FiberVector[] waitingFibers;
 	//thread managment
 	private Thread[] threadPool;
 	private bool[] threadWorking;
@@ -94,14 +95,11 @@ class JobManager{
 			threadPool~=th;
 		}
 		waitingFibers.length=threadsCount;
-		waitingFibersMutex.length=threadsCount;
-		foreach(ref mut;waitingFibersMutex)mut=new Mutex;
-		//waitingJobsMutex=new Mutex;
+		foreach(ref f;waitingFibers)f=new FiberVector;
 		waitingJobs=new JobVector();
 		fibersCache=new CacheVector(threadsCount);
 	}
 	void start(){
-		writeln("JobManager start");
 		foreach(thread;threadPool){
 			thread.start();
 		}
@@ -109,43 +107,35 @@ class JobManager{
 	void waitForEnd(){
 		bool wait=true;
 		do{
-			wait=!waitingJobs.empty;
-			//writeln(waitingJobs.empty);
+			wait= !waitingJobs.empty;
 			foreach(fibers;waitingFibers){
-				wait=wait || fibers.length>0;
+				wait=wait || !fibers.empty ;
 			}
 			foreach(yes;threadWorking){
 				wait=wait || yes;
 			}
-			Thread.sleep(100.msecs);
+			Thread.sleep(1000.msecs);
 		}while(wait);
-		writeln("JobManager nothing to do");
 	}
 	void end(){
 		exit=true;
 		foreach(thread;threadPool){
 			thread.join;
 		}
-		writeln("JobManager end");
 	}
 	
 	void addFiber(FiberData fiberData){
 		assertLock(waitingFibers.length==threadPool.length);
-		synchronized( waitingFibersMutex[fiberData.threadNum] )
-		{
-			assertLock(fiberData.fiber.state!=Fiber.State.TERM);
-			waitingFibers[fiberData.threadNum].assumeSafeAppend~=fiberData;
-			debugHelper.fibersAddedUp();
-		}
+		assertLock(fiberData.fiber.state!=Fiber.State.TERM);
+		waitingFibers[fiberData.threadNum].add(fiberData);
+		debugHelper.fibersAddedUp();
+
 	}
 	void addJob(JobDelegate del){
 		Job* job=new Job;
 		job.del=del;
-		//synchronized( waitingJobsMutex )
-		{
-			waitingJobs.add(job);
-			debugHelper.jobsAddedUp();
-		}
+		waitingJobs.add(job);
+		debugHelper.jobsAddedUp();
 	}
 	
 	
@@ -157,11 +147,8 @@ class JobManager{
 		counter.count=1;
 		job.counter=counter;
 		counter.waitingFiber=getFiberData();
-		//synchronized( waitingJobsMutex )
-		{
-			waitingJobs.add(job);
-			debugHelper.jobsAddedUp();
-		}
+		waitingJobs.add(job);
+		debugHelper.jobsAddedUp();
 		Fiber.yield();
 	}
 	void addJobsAndWait(JobDelegate[] dels){
@@ -172,86 +159,60 @@ class JobManager{
 		jobs.length=dels.length;
 		counter.count=cast(uint)dels.length;
 		counter.waitingFiber=getFiberData();
-		//synchronized( waitingJobsMutex )
-		{
-			foreach(i;0..dels.length){
-				jobs[i]=new Job;
-				jobs[i].del=dels[i];
-				jobs[i].counter=counter;
-				waitingJobs.add(jobs[i]);
-				debugHelper.jobsAddedUp();
-			}
+
+		foreach(i;0..dels.length){
+			jobs[i]=new Job;
+			jobs[i].del=dels[i];
+			jobs[i].counter=counter;
+			waitingJobs.add(jobs[i]);
+			debugHelper.jobsAddedUp();
 		}
+		//waitingJobs.add(jobs);//faster? slower?
+
 		Fiber.yield();
 	}
-	//synchronized by caller
-	private FiberData popFiber(){
-		FiberData ff;
-		foreach(i,fiberData;waitingFibers[jobManagerThreadNum]){
-			ff=fiberData;
-			waitingFibers[jobManagerThreadNum]=waitingFibers[jobManagerThreadNum].remove(i);
-			debugHelper.fibersDoneUp();
-			break;
-		}
-		
-		return ff;
-	}
-	//synchronized by caller
-	private Job* popJob(){
-		/*if(waitingJobs.length==0)return null;
-		Job ff=waitingJobs[$-1];
-		waitingJobs=waitingJobs.remove(waitingJobs.length-1);
-		debugHelper.jobsDoneUp();
-		return ff;*/
-		Job* job=waitingJobs.pop();
-		if(job is null)return null;
-		debugHelper.jobsDoneUp();
-		return job;
-	}
+
 	void runNextJob(){
 		static Fiber lastFreeFiber;//1 element tls cache
-
 		immutable bool useCache=false;//may be bugged and for simple scenario simple 1 element cache is even faster. I think in real scenario cache should be faster
+
 		Fiber fiber;
-		//try to get fiber
-		if(waitingFibers[jobManagerThreadNum].length>0){
-			synchronized( waitingFibersMutex[jobManagerThreadNum] ){
-				fiber=popFiber().fiber;
-			}
+		FiberData fd=waitingFibers[jobManagerThreadNum].pop;
+		if(fd!=FiberData.init){
+			fiber=fd.fiber;
+			debugHelper.fibersDoneUp();
 		}
-		//no fiber try to get new job
 		if(fiber is null && !waitingJobs.empty){
-			//synchronized( waitingJobsMutex )
-			{
-				Job* job;
-				job=popJob();
-				if(job !is null){
-					if(useCache){
-						fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
-						assertLock(fiber.state==Fiber.State.TERM);
-						fiber.reset(&job.run);
+			Job* job;
+			job=waitingJobs.pop();
+			if(job !is null){
+				debugHelper.jobsDoneUp();
+				if(useCache){
+					fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
+					assertLock(fiber.state==Fiber.State.TERM);
+					fiber.reset(&job.run);
+				}else{
+					if(lastFreeFiber is null){
+						fiber= new Fiber( &job.run);
 					}else{
-						if(lastFreeFiber is null){
-							fiber= new Fiber( &job.run);
-						}else{
-							fiber=lastFreeFiber;
-							lastFreeFiber=null;
-							fiber.reset(&job.run);
-						}
+						fiber=lastFreeFiber;
+						lastFreeFiber=null;
+						fiber.reset(&job.run);
 					}
 				}
-			}		
+			}	
 		}
 		//nothing to do
 		if(fiber is null ){
 			threadWorking[jobManagerThreadNum]=false;
-			Thread.sleep(1.msecs);
+			Thread.sleep(1000.usecs);
 			return;
 		}
 		//do the job
 		threadWorking[jobManagerThreadNum]=true;
 		assertLock(fiber.state==Fiber.State.HOLD);
 		fiber.call();
+
 		//reuse fiber
 		if(fiber.state==Fiber.State.TERM){
 			if(useCache){
@@ -337,6 +298,11 @@ struct UniversalJob{
 	alias UnDelegate=UniversalDelegate!Delegate;
 	Job job;
 	UnDelegate unDel;
+
+	void init(Delegate del,Parameters!(Delegate) args){
+		unDel=makeUniversalDelegate!(Delegate)(del,args);
+		job.del=&unDel.callAndSaveReturn;
+	}
 }
 
 alias JobDelegate=void delegate();
@@ -393,7 +359,6 @@ int randomRecursionJobs(int deepLevel){
 	int randNum=uniform(1,10);
 	//randNum=10;
 	UD[] dels;
-	//dels.length=10;
 	dels.length=randNum;
 	foreach(ref d;dels){
 		d=makeUniversalDelegate!(typeof(&randomRecursionJobs))(&randomRecursionJobs,deepLevel-1);
@@ -409,7 +374,15 @@ void simpleYield(){
 		Fiber.yield();
 	}
 }
-
+import gl3n.linalg;
+void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){
+	assertLock(mA.length==mB.length && mB.length==mC.length);
+	foreach(i;0..mA.length){
+		foreach(k;0..100){
+			mC[i]=mB[i]*mB[i];
+		}
+	}
+}
 void testPerformance(){		
 	uint iterations=100;
 	uint packetSize=10_000;
@@ -420,10 +393,6 @@ void testPerformance(){
 	foreach(i;0..iterations){
 		jobManager.addJobsAndWait(dels);
 	}
-	writeln(jobManager.debugHelper.jobsAdded);
-	writeln(jobManager.debugHelper.jobsDone);
-	writeln(jobManager.debugHelper.fibersAdded);
-	writeln(jobManager.debugHelper.fibersDone);
 	assertLock(jobManager.debugHelper.jobsAdded==iterations*packetSize);
 	assertLock(jobManager.debugHelper.jobsDone ==iterations*packetSize);
 	assertLock(jobManager.debugHelper.fibersAdded==iterations*packetSize+iterations);
@@ -431,7 +400,33 @@ void testPerformance(){
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms], %s[it/ms]",iterations,packetSize,sw.peek().msecs,iterations*packetSize/sw.peek().msecs);
 }
-void test(){
+
+void testPerformanceMatrix(){	
+	import std.parallelism;
+	uint partsNum=32;
+	uint iterations=100;	
+	uint matricesNum=512;
+	assertLock(matricesNum%partsNum==0);
+	mat4[] matricesA=new mat4[matricesNum];
+	mat4[] matricesB=new mat4[matricesNum];
+	mat4[] matricesC=new mat4[matricesNum];
+	StopWatch sw;
+	sw.start();
+	jobManager.debugHelper.resetCounters();
+	alias UD=UniversalDelegate!(void function(mat4[],mat4[],mat4[]));
+	UD[] dels;
+	dels.length=partsNum;
+	uint step=matricesNum/partsNum;
+	foreach(i,ref d;dels){
+		d=makeUniversalDelegate!(typeof(&mulMat))(&mulMat,matricesA[i*step..(i+1)*step],matricesB[i*step..(i+1)*step],matricesC[i*step..(i+1)*step]);
+	}
+	foreach(i;0..iterations){
+		jobManager.addJobsAndWait(dels);
+	}
+	sw.stop();  
+	writefln( "BenchmarkMatrix: %s*%s : %s[ms], %s[it/ms]",iterations,matricesNum,sw.peek().msecs,iterations*matricesNum/sw.peek().msecs);
+}
+void test(uint threadsNum=16){
 	import core.memory;
 	//GC.disable();
 	version(DigitalMars){
@@ -441,7 +436,7 @@ void test(){
 	
 	void startTest(){
 		JobDelegate[] dels;
-		
+		//jobManager.addJobAndWait((&testPerformanceMatrix).toDelegate);
 		jobManager.addJobAndWait((&testPerformance).toDelegate);
 
 		dels=makeTestJobsFrom(&testFiberLockingToThread,100);
@@ -452,18 +447,24 @@ void test(){
 		assertLock(jobManager.debugHelper.jobsAdded==jobsRun+1);
 		assertLock(jobManager.debugHelper.jobsDone==jobsRun+1);
 		assertLock(jobManager.debugHelper.fibersAdded==jobsRun+2);
-		assertLock(jobManager.debugHelper.fibersDone==jobsRun+2);
-		
+		assertLock(jobManager.debugHelper.fibersDone==jobsRun+2);	
 	}
-	writeln("Start JobManager test");
-	jobManager.init(16);
+	//writeln("Start JobManager test");
+	jobManager.init(threadsNum);
 	jobManager.addJob((&startTest).toDelegate);
-	writeln(jobManager.waitingJobs.classinfo.init.length);
-	writeln(jobManager.waitingJobs.classinfo.init.length);
+	//writeln(jobManager.waitingJobs.classinfo.init.length);
+	//writeln(jobManager.waitingJobs.classinfo.init.length);
 	jobManager.start();
 	jobManager.waitForEnd();
 	jobManager.end();
-	writeln("End JobManager test");
+	//writeln("End JobManager test");
+}
+void testScalability(){
+	foreach(i;0..16){
+		jobManager=new JobManager;
+		write(i+1," ");
+		test(i+1);
+	}
 }
 ///main functionality test
 unittest{
