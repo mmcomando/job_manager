@@ -144,8 +144,7 @@ public:
 ////////////////////
 import std.algorithm:remove;
 
-
-class LockedVector(T){
+class LockedVectorBuildIn(T){
 	align(64)Mutex mutex;
 	T[] array;
 public:
@@ -161,6 +160,11 @@ public:
 			array.assumeSafeAppend~=t;
 		}
 	}	
+	void add( T[]  t ) {
+		synchronized( mutex ){
+			array.assumeSafeAppend~=t;
+		}
+	}
 	
 	T pop(  ) {
 		synchronized( mutex ){
@@ -170,5 +174,142 @@ public:
 			return obj;
 		}
 	}
+	
+}
+
+class LockedVector(T){
+	align(64)Mutex mutex;
+	Vector!T array;
+public:
+	this(){
+		mutex=new Mutex;
+		array=new Vector!T;
+	}
+	bool empty(){
+		return(array.length==0);
+	}	
+	
+	void add( T  t ) {
+		synchronized( mutex ){
+			array~=t;
+		}
+	}	
+	void add( T[]  t ) {
+		synchronized( mutex ){
+			array~=t;
+		}
+	}
+	
+	T pop(  ) {
+		synchronized( mutex ){
+			if(array.length==0)return T.init;
+			T obj=array[$-1];
+			array.remove(array.length-1);
+			return obj;
+		}
+	}
+	
+}
+
+
+import std.math:nextPow2;
+class Vector(T){
+	T[] array;
+	size_t used;
+public:
+	this(){
+		extend(1);
+	}
+	bool empty(){
+		return (used==0);
+	}
+	size_t length(){
+		return used;
+	}	
+
+	void extend(size_t newNumOfElements){
+		T[] oldArray=array;
+		size_t oldSize=oldArray.length*T.sizeof;
+		size_t newSize=newNumOfElements*T.sizeof;
+		T* memory=cast(T*)malloc(newSize);
+		memcpy(memory,oldArray.ptr,oldSize);
+		array=memory[0..newNumOfElements];
+
+		if(oldArray !is null){
+			memset(oldArray.ptr,0,oldArray.length*T.sizeof);
+			free(oldArray.ptr);
+		}
+	}
+
+	void add( T  t ) {
+		if(used>=array.length){
+			extend(array.length*2);
+		}
+		array[used]=t;
+		used++;
+	}
+
+	void add( T[]  t ) {
+		if(used+t.length>array.length){
+			extend(nextPow2(array.length+t.length));
+		}
+		foreach(i;0..t.length){
+			array[used+i]=t[i];
+		}
+		used+=t.length;
+	}
+	void remove(size_t elemNum){
+		array[elemNum]=array[used-1];
+		used--;
+	}
+
+	T opIndex(size_t elemNum){
+		return array[elemNum];
+	}
+	auto opSlice(){
+		return array[0..used];
+	}
+	size_t opDollar(){
+		return used;
+	}
+	void opOpAssign(string op)(T obj){
+		static assert(op=="~");
+		add(obj);
+	}
+	void opOpAssign(string op)(T[] obj){
+		static assert(op=="~");
+		add(obj);
+	}
+	
+}
+
+unittest{
+	Vector!int vec=new Vector!int;
+	assert(vec.empty);
+	vec.add(0);
+	vec.add(1);
+	vec.add(2);
+	vec.add(3);
+	vec.add(4);
+	vec.add(5);
+	assert(vec.length==6);
+	assert(vec[3]==3);
+	assert(vec[5]==5);
+	assert(vec[]==[0,1,2,3,4,5]);
+	assert(!vec.empty);
+	vec.remove(3);
+	assert(vec.length==5);
+	assert(vec[]==[0,1,2,5,4]);//unstable remove
+
+}
+
+unittest{
+	Vector!int vec=new Vector!int;
+	assert(vec.empty);
+	vec~=[0,1,2,3,4,5];
+	assert(vec[]==[0,1,2,3,4,5]);
+	assert(vec.length==6);
+	vec~=6;
+	assert(vec[]==[0,1,2,3,4,5,6]);
 	
 }
