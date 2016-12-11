@@ -6,9 +6,32 @@ import std.stdio:writeln,writefln;
 import std.conv:to;
 import std.random:uniform;
 import job_manager;
+
+
+
+void printException(Exception e, int maxStack = 4) {
+	writeln("Exception message: ", e.msg);
+	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line,Thread.getThis.id);
+	writeln("Call stack:");
+	foreach (i, b; e.info) {
+		writeln(b);
+		if (i >= maxStack)
+			break;
+	}
+	writeln("--------------");
+}
+void printStack(){
+	try{
+		throw new Exception("Dummy");
+	}catch(Exception e ){
+		printException(e);
+	}
+}
+
 //simple assert stopped/killed?? thread and printed nothing so not very useful
 void assertLock(bool ok,string file=__FILE__,int line=__LINE__){
 	if(!ok){
+		printStack();
 		while(1){
 			writefln("assert failed, thread: %s file: %s line: %s",Thread.getThis.id,file,line);
 			Thread.sleep(1000.msecs);
@@ -68,7 +91,7 @@ class BucketAllocator(uint bucketSize){
 			Bucket* next;
 		}
 	}
-	enum bucketsNum=128;
+	enum bucketsNum=1282;
 	Mutex mutex;
 
 

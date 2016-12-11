@@ -14,34 +14,18 @@ import cache_vector;
 import job_vector;
 
 import std.stdio:write,writeln,writefln;
+import core.stdc.stdlib;
 
 
 
-void printException(Exception e, int maxStack = 4) {
-	writeln("Exception message: ", e.msg);
-	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line,Thread.getThis.id);
-	writeln("Call stack:");
-	foreach (i, b; e.info) {
-		writeln(b);
-		if (i >= maxStack)
-			break;
-	}
-	writeln("--------------");
-}
-void printStack(){
-	try{
-		throw new Exception("Dummy");
-	}catch(Exception e ){
-		printException(e);
-	}
-}
 
 
-alias JobVector=LowLockQueue!(Job*);
+
+alias JobVector=LowLockQueue!(JobDelegate*,bool);
 //alias JobVector=LockedVector!(Job*);
 
-//alias FiberVector=LowLockQueue!(FiberData);
-alias FiberVector=LockedVector!(FiberData);
+alias FiberVector=LowLockQueue!(FiberData,bool);
+//alias FiberVector=LockedVector!(FiberData);
 
 
 uint jobManagerThreadNum;//thread local var
@@ -97,7 +81,7 @@ class JobManager{
 		waitingFibers.length=threadsCount;
 		foreach(ref f;waitingFibers)f=new FiberVector;
 		waitingJobs=new JobVector();
-		fibersCache=new CacheVector(threadsCount);
+		fibersCache=new CacheVector(128);
 	}
 	void start(){
 		foreach(thread;threadPool){
@@ -114,7 +98,7 @@ class JobManager{
 			foreach(yes;threadWorking){
 				wait=wait || yes;
 			}
-			Thread.sleep(1000.msecs);
+			Thread.sleep(100.msecs);
 		}while(wait);
 	}
 	void end(){
@@ -131,73 +115,43 @@ class JobManager{
 		debugHelper.fibersAddedUp();
 
 	}
-	void addJob(JobDelegate del){
-		Job* job=new Job;
-		job.del=del;
-		waitingJobs.add(job);
+	void addJob(JobDelegate* del){
+		waitingJobs.add(del);
 		debugHelper.jobsAddedUp();
 	}
-	
-	
-	void addJobAndWait(JobDelegate del){
-		assertLock(Fiber.getThis() !is null);
-		Counter counter=new Counter;
-		Job* job=new Job;
-		job.del=del;
-		counter.count=1;
-		job.counter=counter;
-		counter.waitingFiber=getFiberData();
-		waitingJobs.add(job);
-		debugHelper.jobsAddedUp();
-		Fiber.yield();
-	}
-	void addJobsAndWait(JobDelegate[] dels){
-		if(dels.length==0)return;
-		assertLock(Fiber.getThis() !is null);
-		Counter counter=new Counter;
-		Job*[] jobs;
-		jobs.length=dels.length;
-		counter.count=cast(uint)dels.length;
-		counter.waitingFiber=getFiberData();
-
-		foreach(i;0..dels.length){
-			jobs[i]=new Job;
-			jobs[i].del=dels[i];
-			jobs[i].counter=counter;
-			waitingJobs.add(jobs[i]);
+	void addJobs(JobDelegate*[] dels){
+		foreach(del;dels){
+			//waitingJobs.add(del);
 			debugHelper.jobsAddedUp();
 		}
-		//waitingJobs.add(jobs);//faster? slower?
-
-		Fiber.yield();
+		waitingJobs.add(dels);
 	}
 
 	void runNextJob(){
 		static Fiber lastFreeFiber;//1 element tls cache
-		immutable bool useCache=false;//may be bugged and for simple scenario simple 1 element cache is even faster. I think in real scenario cache should be faster
+		enum bool useCache=false;//may be bugged and for simple scenario simple 1 element backup is even faster. I think in real scenario cache should be faster
 
 		Fiber fiber;
 		FiberData fd=waitingFibers[jobManagerThreadNum].pop;
 		if(fd!=FiberData.init){
 			fiber=fd.fiber;
 			debugHelper.fibersDoneUp();
-		}
-		if(fiber is null && !waitingJobs.empty){
-			Job* job;
+		}else if( !waitingJobs.empty ){
+			JobDelegate* job;
 			job=waitingJobs.pop();
 			if(job !is null){
 				debugHelper.jobsDoneUp();
-				if(useCache){
+				static if(useCache){
 					fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
 					assertLock(fiber.state==Fiber.State.TERM);
-					fiber.reset(&job.run);
+					fiber.reset(*job);
 				}else{
 					if(lastFreeFiber is null){
-						fiber= new Fiber( &job.run);
+						fiber= new Fiber( *job);
 					}else{
 						fiber=lastFreeFiber;
 						lastFreeFiber=null;
-						fiber.reset(&job.run);
+						fiber.reset(*job);
 					}
 				}
 			}	
@@ -205,7 +159,7 @@ class JobManager{
 		//nothing to do
 		if(fiber is null ){
 			threadWorking[jobManagerThreadNum]=false;
-			Thread.sleep(1000.usecs);
+			//Thread.sleep(10.usecs);
 			return;
 		}
 		//do the job
@@ -215,7 +169,7 @@ class JobManager{
 
 		//reuse fiber
 		if(fiber.state==Fiber.State.TERM){
-			if(useCache){
+			static if(useCache){
 				fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
 			}else{
 				lastFreeFiber=fiber;
@@ -230,39 +184,6 @@ class JobManager{
 		}
 	}
 	
-	
-	
-	
-	//////////////////////////////////////////////////////////////////////////////////////////
-	//normal: delegate,function
-	auto addJobAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
-		auto unDel=makeUniversalDelegate!(Delegate)(del,args);
-		addJobAndWait(&unDel.callAndSaveReturn);
-		static if(!is(ReturnType!Delegate==void)){ 
-			return unDel.result;
-		}
-	}
-	//UniversalDelegate
-	auto addJobsAndWait(UnDelegate)(UnDelegate[] unDels){
-		static assert(__traits(isSame, TemplateOf!(UnDelegate), UniversalDelegate));
-		JobDelegate[] dels;
-		dels.length=unDels.length;
-		foreach(i,ref del;dels){
-			del=&unDels[i].callAndSaveReturn;
-		}
-		addJobsAndWait(dels);
-		alias RetType=ReturnType!(UnDelegate.deleg);
-		static if(!is(RetType==void)){ 
-			RetType[] results;
-			results.length=unDels.length;
-			foreach(i,ref del;unDels){
-				results[i]=del.result;
-			}
-			return results;
-		}
-	}
-	//////////////////////////////////////////////////////////////////////////////////////////
-	
 }
 struct FiberData{
 	Fiber fiber;
@@ -273,9 +194,9 @@ FiberData getFiberData(){
 	assertLock(fiber !is null);
 	return FiberData(fiber,jobManagerThreadNum);
 }
-class Counter{
+align (64) class Counter{
 	align (64)shared uint count;
-	FiberData waitingFiber;
+	align (64)FiberData waitingFiber;
 	this(){}
 	this(uint count){
 		this.count=count;
@@ -293,30 +214,120 @@ class Counter{
 	}
 }
 
-struct UniversalJob{
-	alias Delegate=int delegate(ref int,string,ulong);
+struct UniversalJob(Delegate){
 	alias UnDelegate=UniversalDelegate!Delegate;
-	Job job;
 	UnDelegate unDel;
-
-	void init(Delegate del,Parameters!(Delegate) args){
-		unDel=makeUniversalDelegate!(Delegate)(del,args);
-		job.del=&unDel.callAndSaveReturn;
-	}
-}
-
-alias JobDelegate=void delegate();
-struct Job{
-	JobDelegate del;
+	JobDelegate runDel;
+	JobDelegate* delPointer;
 	Counter counter;
 	void run(){	
-		del();
+		unDel.callAndSaveReturn();
 		if(counter !is null){
 			counter.decrement();
 		}
 	}
+
+	void init(Delegate del,Parameters!(Delegate) args){
+		unDel=makeUniversalDelegate!(Delegate)(del,args);
+		runDel=&run;
+		delPointer=&runDel;
+	}
+
+}
+
+import std.experimental.allocator;
+import core.stdc.stdlib;
+import std.typecons:scoped;
+auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
+	UniversalJob!(Delegate) unJob;
+	unJob.init(del,args);
+	auto counter=scoped!(Counter);
+	counter.count=1;
+	counter.waitingFiber=getFiberData();
+	unJob.counter=counter;
+	jobManager.waitingJobs.add(unJob.delPointer);
+	jobManager.debugHelper.jobsAddedUp();
+	Fiber.yield();
+	static if(unJob.unDel.hasReturn){
+		return unJob.unDel.result;
+	}
+}
+
+
+struct UniversalJobGroup(Delegate){
+	alias UnJob=UniversalJob!(Delegate);
+	Counter counter;
+	uint jobsNum;
+	uint jobsAdded;
+	UnJob[] unJobs;
+	JobDelegate*[] dels;
+
+	this(uint jobsNum){
+		this.jobsNum=jobsNum;
+	}
+	void add(Delegate del,Parameters!(Delegate) args){
+		assertLock(unJobs.length>0 && jobsAdded<jobsNum);
+		unJobs[jobsAdded].init(del,args);
+		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
+		jobsAdded++;
+	}
+	//returns range so you can allocate it as you want
+	//but remember that data is stack allocated
+	auto wait(){
+
+		//counter=new Counter;
+		mixin(stackAllocateClass("counter"));
+		counter.count=jobsNum;
+		counter.waitingFiber=getFiberData();
+		foreach(ref unDel;unJobs){
+			unDel.counter=counter;
+		}
+		jobManager.addJobs(dels);
+		Fiber.yield();
+		import std.algorithm:map;
+		static if(UnJob.UnDelegate.hasReturn){
+			return unJobs.map!(a => a.unDel.result);
+		}
+
+	}
+}
+string stackAllocateClass(string varName){
+	string code=format(
+		"
+	    import std.traits:classInstanceAlignment;
+		alias ___varType%s=typeof(%s);
+        static assert((is(___varType%s==class)));
+        auto ___aligment%s=classInstanceAlignment!___varType%s;
+        auto ___size%s=___varType%s.classinfo.init.length+___aligment%s;//Not sure what i am doing
+       
+		void[] ___varMemory%s=alloca(___size%s)[0..___size%s];
+		%s=___varMemory%s[cast(size_t)___varMemory%s.ptr%%___aligment%s..$].emplace!(___varType%s);
+
+	",  varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		);
+	return code;
+}
+
+
+//has to be a mixin because the code has to be executed in calling .... (calloc)
+string getStackMemory(string varName){
+	string code=format(
+		"
+	uint ___jobsNum=%s.jobsNum;
+	%s.UnJob* ___unJobsMemory=cast(%s.UnJob*)alloca(%s.UnJob.sizeof*___jobsNum);//TODO aligment?
+	JobDelegate** ___delsMemory=cast(JobDelegate**)alloca((JobDelegate*).sizeof*___jobsNum);//TODO aligment?
+	%s.unJobs=___unJobsMemory[0..___jobsNum];
+	%s.dels=___delsMemory[0..___jobsNum];
+		",varName,varName,varName,varName,varName,varName);
+	return code;
+
 	
 }
+
+alias JobDelegate=void delegate();
 
 
 
@@ -327,16 +338,16 @@ import std.algorithm:sum;
 
 
 
-JobDelegate[] makeTestJobsFrom(void function() fn,uint num){
-	return makeTestJobsFrom(fn.toDelegate,num);
+void makeTestJobsFrom(void function() fn,uint num){
+	makeTestJobsFrom(fn.toDelegate,num);
 }
-JobDelegate[] makeTestJobsFrom(JobDelegate deleg,uint num){
-	JobDelegate[] dels;
-	dels.length=num;
-	foreach(uint i,ref del;dels){
-		del=deleg;
+void makeTestJobsFrom(JobDelegate deleg,uint num){
+	UniversalJobGroup!JobDelegate group=UniversalJobGroup!JobDelegate(num);
+	mixin(getStackMemory("group"));
+	foreach(int i;0..num){
+		group.add(deleg);
 	}
-	return dels;
+	group.wait();
 }
 
 void testFiberLockingToThread(){
@@ -358,12 +369,15 @@ int randomRecursionJobs(int deepLevel){
 	}
 	int randNum=uniform(1,10);
 	//randNum=10;
-	UD[] dels;
-	dels.length=randNum;
-	foreach(ref d;dels){
-		d=makeUniversalDelegate!(typeof(&randomRecursionJobs))(&randomRecursionJobs,deepLevel-1);
+
+	alias ddd=typeof(&randomRecursionJobs);
+	UniversalJobGroup!ddd group=UniversalJobGroup!ddd(randNum);
+	mixin(getStackMemory("group"));
+	foreach(int i;0..randNum){
+		group.add(&randomRecursionJobs,deepLevel-1);
 	}
-	int[] jobsRun=jobManager.addJobsAndWait(dels);
+
+	auto jobsRun=group.wait();
 	return sum(jobsRun)+randNum;
 }
 /// One Job and one Fiber.yield
@@ -374,24 +388,21 @@ void simpleYield(){
 		Fiber.yield();
 	}
 }
-import gl3n.linalg;
-void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){
-	assertLock(mA.length==mB.length && mB.length==mC.length);
-	foreach(i;0..mA.length){
-		foreach(k;0..100){
-			mC[i]=mB[i]*mB[i];
-		}
-	}
-}
+
 void testPerformance(){		
-	uint iterations=100;
-	uint packetSize=10_000;
+	uint iterations=10000;
+	uint packetSize=100;
 	StopWatch sw;
 	sw.start();
 	jobManager.debugHelper.resetCounters();
-	JobDelegate[] dels=makeTestJobsFrom(&simpleYield,packetSize);
+	alias ddd=typeof(&simpleYield);
+	UniversalJobGroup!ddd group=UniversalJobGroup!ddd(packetSize);
+	mixin(getStackMemory("group"));
+	foreach(int i;0..packetSize){
+		group.add(&simpleYield);
+	}
 	foreach(i;0..iterations){
-		jobManager.addJobsAndWait(dels);
+		group.wait();
 	}
 	assertLock(jobManager.debugHelper.jobsAdded==iterations*packetSize);
 	assertLock(jobManager.debugHelper.jobsDone ==iterations*packetSize);
@@ -400,11 +411,21 @@ void testPerformance(){
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms], %s[it/ms]",iterations,packetSize,sw.peek().msecs,iterations*packetSize/sw.peek().msecs);
 }
-
+import gl3n.linalg;
+void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){
+	assertLock(mA.length==mB.length && mB.length==mC.length);
+	foreach(i;0..mA.length){
+		foreach(k;0..1){
+			mC[i]=mB[i]*mB[i];
+		}
+	}
+}
+__gshared float result;
+__gshared float base=1;
 void testPerformanceMatrix(){	
 	import std.parallelism;
-	uint partsNum=32;
-	uint iterations=100;	
+	uint partsNum=16;
+	uint iterations=10000;	
 	uint matricesNum=512;
 	assertLock(matricesNum%partsNum==0);
 	mat4[] matricesA=new mat4[matricesNum];
@@ -413,18 +434,22 @@ void testPerformanceMatrix(){
 	StopWatch sw;
 	sw.start();
 	jobManager.debugHelper.resetCounters();
-	alias UD=UniversalDelegate!(void function(mat4[],mat4[],mat4[]));
-	UD[] dels;
-	dels.length=partsNum;
 	uint step=matricesNum/partsNum;
-	foreach(i,ref d;dels){
-		d=makeUniversalDelegate!(typeof(&mulMat))(&mulMat,matricesA[i*step..(i+1)*step],matricesB[i*step..(i+1)*step],matricesC[i*step..(i+1)*step]);
+
+	alias ddd=typeof(&mulMat);
+	UniversalJobGroup!ddd group=UniversalJobGroup!ddd(partsNum);
+	mixin(getStackMemory("group"));
+	foreach(int i;0..partsNum){
+		group.add(&mulMat,matricesA[i*step..(i+1)*step],matricesB[i*step..(i+1)*step],matricesC[i*step..(i+1)*step]);
 	}
 	foreach(i;0..iterations){
-		jobManager.addJobsAndWait(dels);
+		group.wait();
 	}
+
+	
 	sw.stop();  
-	writefln( "BenchmarkMatrix: %s*%s : %s[ms], %s[it/ms]",iterations,matricesNum,sw.peek().msecs,iterations*matricesNum/sw.peek().msecs);
+	result=cast(float)iterations*matricesNum/sw.peek().usecs;
+	writefln( "BenchmarkMatrix: %s*%s : %s[us], %s[it/us] %s",iterations,matricesNum,sw.peek().usecs,cast(float)iterations*matricesNum/sw.peek().usecs,result/base);
 }
 void test(uint threadsNum=16){
 	import core.memory;
@@ -433,27 +458,24 @@ void test(uint threadsNum=16){
 		import etc.linux.memoryerror;
 		//registerMemoryErrorHandler();
 	}
-	
-	void startTest(){
-		JobDelegate[] dels;
-		//jobManager.addJobAndWait((&testPerformanceMatrix).toDelegate);
-		jobManager.addJobAndWait((&testPerformance).toDelegate);
 
-		dels=makeTestJobsFrom(&testFiberLockingToThread,100);
-		jobManager.addJobsAndWait(dels);
+	void startTest(){
+		alias UnDel=void delegate();
+		callAndWait!(UnDel)((&testPerformance).toDelegate);
+		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
+		makeTestJobsFrom(&testFiberLockingToThread,100);
 		
-		jobManager.debugHelper.resetCounters();
-		int jobsRun=jobManager.addJobAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
-		assertLock(jobManager.debugHelper.jobsAdded==jobsRun+1);
-		assertLock(jobManager.debugHelper.jobsDone==jobsRun+1);
-		assertLock(jobManager.debugHelper.fibersAdded==jobsRun+2);
-		assertLock(jobManager.debugHelper.fibersDone==jobsRun+2);	
+		/*jobManager.debugHelper.resetCounters();
+		 int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
+		 assertLock(jobManager.debugHelper.jobsAdded==jobsRun+1);
+		 assertLock(jobManager.debugHelper.jobsDone==jobsRun+1);
+		 assertLock(jobManager.debugHelper.fibersAdded==jobsRun+2);
+		 assertLock(jobManager.debugHelper.fibersDone==jobsRun+2);*/
 	}
 	//writeln("Start JobManager test");
 	jobManager.init(threadsNum);
-	jobManager.addJob((&startTest).toDelegate);
-	//writeln(jobManager.waitingJobs.classinfo.init.length);
-	//writeln(jobManager.waitingJobs.classinfo.init.length);
+	auto del=(&startTest).toDelegate;
+	jobManager.addJob(&del);
 	jobManager.start();
 	jobManager.waitForEnd();
 	jobManager.end();
@@ -464,10 +486,12 @@ void testScalability(){
 		jobManager=new JobManager;
 		write(i+1," ");
 		test(i+1);
+		if(i==0)base=result;
 	}
 }
 ///main functionality test
 unittest{
-	test();
+	//writeln(classInstanceAlignment!(JobManager.DebugHelper.alignof));
+	testScalability();
 	
 }

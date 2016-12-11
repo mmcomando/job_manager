@@ -5,7 +5,8 @@ import multithreaded_utils;
 void main()
 {
 	version(unittest){}else{
-		test();
+		test(5);
+		//testScalability();
 		//testCV();
 		//testAL();
 	}
