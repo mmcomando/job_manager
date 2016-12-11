@@ -6,6 +6,7 @@
 	"description": "A minimal D application.",
 	"copyright": "Copyright © 2016, pc",
 	"license": "proprietary",
+	"dflags-dmd": ["-vgc"],
 	"dependencies" : {
 		"gl3n" : ">=0.0.0"
 	},

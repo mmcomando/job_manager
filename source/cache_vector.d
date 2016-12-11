@@ -27,7 +27,10 @@ class CacheVector{
 	this(uint length){
 		assert(length>0);
 		dataArray=extendArray(length,dataArray);
-		mutex=new Mutex();
+		mutex=mallocator.make!(Mutex);
+	}
+	~this(){
+		mallocator.dispose(mutex);
 	}
 	void clear(){
 		synchronized(mutex){
@@ -43,7 +46,7 @@ class CacheVector{
 	}
 	T initVar(){
 		static void dummy(){}
-		auto fiber=new Fiber(&dummy);
+		auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
 		fiber.call();
 		assertLock(fiber.state==Fiber.State.TERM);
 		return fiber;

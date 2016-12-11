@@ -8,6 +8,7 @@ import core.thread:Fiber,Thread;
 import core.memory;
 import std.conv:emplace;
 import core.memory;
+import std.experimental.allocator;
 
 import multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
@@ -44,13 +45,18 @@ private:
 public:
 	this() {
 		static if(useAllocator){
-			allocator=new Allocator();
+			allocator=mallocator.make!Allocator();
 			void[] memory=allocator.allocate();
 			first = last =  memory.emplace!(Node)( T.init );
 		}else{
 			first = last = new Node( T.init );
 		}
 		producerLock = consumerLock = false;
+	}
+	~this(){
+		static if(useAllocator){
+			mallocator.dispose(allocator);
+		}
 	}
 
 	
@@ -182,8 +188,12 @@ class LockedVector(T){
 	Vector!T array;
 public:
 	this(){
-		mutex=new Mutex;
-		array=new Vector!T;
+		mutex=mallocator.make!(Mutex);
+		array=mallocator.make!(Vector!T);
+	}
+	~this(){
+		mallocator.dispose(mutex);
+		mallocator.dispose(array);
 	}
 	bool empty(){
 		return(array.length==0);
@@ -212,13 +222,13 @@ public:
 }
 
 
-import std.math:nextPow2;
 class Vector(T){
 	T[] array;
 	size_t used;
 public:
-	this(){
-		extend(1);
+	this(size_t numElements=1){
+		assert(numElements>0);
+		extend(numElements);
 	}
 	bool empty(){
 		return (used==0);
@@ -226,18 +236,23 @@ public:
 	size_t length(){
 		return used;
 	}	
+	void reserve(size_t numElements){
+		if(numElements>array.length){
+			extend(numElements);
+		}
+	}
 
 	void extend(size_t newNumOfElements){
 		T[] oldArray=array;
 		size_t oldSize=oldArray.length*T.sizeof;
 		size_t newSize=newNumOfElements*T.sizeof;
 		T* memory=cast(T*)malloc(newSize);
-		memcpy(memory,oldArray.ptr,oldSize);
+		memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
 		array=memory[0..newNumOfElements];
 
 		if(oldArray !is null){
-			memset(oldArray.ptr,0,oldArray.length*T.sizeof);
-			free(oldArray.ptr);
+			memset(cast(void*)oldArray.ptr,0,oldArray.length*T.sizeof);
+			free(cast(void*)oldArray.ptr);
 		}
 	}
 
@@ -251,7 +266,7 @@ public:
 
 	void add( T[]  t ) {
 		if(used+t.length>array.length){
-			extend(nextPow2(array.length+t.length));
+			extend(nextPow2(used+t.length));
 		}
 		foreach(i;0..t.length){
 			array[used+i]=t[i];
@@ -264,6 +279,7 @@ public:
 	}
 
 	T opIndex(size_t elemNum){
+		assert(elemNum<used);
 		return array[elemNum];
 	}
 	auto opSlice(){
@@ -279,6 +295,11 @@ public:
 	void opOpAssign(string op)(T[] obj){
 		static assert(op=="~");
 		add(obj);
+	}
+	void opIndexAssign(T obj,size_t elemNum){
+		assert(elemNum<used);
+		array[elemNum]=obj;
+
 	}
 	
 }
@@ -311,5 +332,14 @@ unittest{
 	assert(vec.length==6);
 	vec~=6;
 	assert(vec[]==[0,1,2,3,4,5,6]);
+	
+}
+
+
+unittest{
+	Vector!int vec=new Vector!int;
+	vec~=[0,1,2,3,4,5];
+	vec[3]=33;
+	assert(vec[3]==33);
 	
 }

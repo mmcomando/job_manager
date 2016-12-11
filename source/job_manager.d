@@ -14,6 +14,7 @@ import cache_vector;
 import job_vector;
 
 import std.stdio:write,writeln,writefln;
+import std.format:format;
 import core.stdc.stdlib;
 
 
@@ -22,7 +23,7 @@ import core.stdc.stdlib;
 
 
 alias JobVector=LowLockQueue!(JobDelegate*,bool);
-//alias JobVector=LockedVector!(Job*);
+//alias JobVector=LockedVector!(JobDelegate*);
 
 alias FiberVector=LowLockQueue!(FiberData,bool);
 //alias FiberVector=LockedVector!(FiberData);
@@ -72,16 +73,17 @@ class JobManager{
 		init(threadsPerCPU);
 	}
 	void init(uint threadsCount){
-		threadWorking.length=threadsCount;
+		threadWorking=mallocator.makeArray!(bool)(threadsCount);
+		waitingFibers=mallocator.makeArray!(FiberVector)(threadsCount);
+		foreach(ref f;waitingFibers)f=mallocator.make!FiberVector;
+		threadPool=mallocator.makeArray!(Thread)(threadsCount);
 		foreach(i;0..threadsCount){
-			Thread th=new Thread(&threadRunFunction);
+			Thread th=mallocator.make!Thread(&threadRunFunction);
 			th.name=i.to!string;
-			threadPool~=th;
+			threadPool[i]=th;
 		}
-		waitingFibers.length=threadsCount;
-		foreach(ref f;waitingFibers)f=new FiberVector;
-		waitingJobs=new JobVector();
-		fibersCache=new CacheVector(128);
+		waitingJobs=mallocator.make!JobVector();
+		fibersCache=mallocator.make!CacheVector(128);
 	}
 	void start(){
 		foreach(thread;threadPool){
@@ -147,7 +149,7 @@ class JobManager{
 					fiber.reset(*job);
 				}else{
 					if(lastFreeFiber is null){
-						fiber= new Fiber( *job);
+						fiber= mallocator.make!Fiber( *job);
 					}else{
 						fiber=lastFreeFiber;
 						lastFreeFiber=null;
@@ -172,6 +174,9 @@ class JobManager{
 			static if(useCache){
 				fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
 			}else{
+				if(lastFreeFiber !is null){
+					mallocator.dispose(lastFreeFiber);
+				}
 				lastFreeFiber=fiber;
 			}
 		}
@@ -447,7 +452,7 @@ void testPerformanceMatrix(){
 }
 void test(uint threadsNum=16){
 	import core.memory;
-	//GC.disable();
+	GC.disable();
 	version(DigitalMars){
 		import etc.linux.memoryerror;
 		//registerMemoryErrorHandler();
@@ -484,8 +489,9 @@ void testScalability(){
 	}
 }
 ///main functionality test
+///
+
 unittest{
-	//writeln(classInstanceAlignment!(JobManager.DebugHelper.alignof));
 	testScalability();
 	
 }

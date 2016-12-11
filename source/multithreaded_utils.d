@@ -6,8 +6,18 @@ import std.stdio:writeln,writefln;
 import std.conv:to;
 import std.random:uniform;
 import job_manager;
+import job_vector;
+import std.experimental.allocator.building_blocks;
+public import std.experimental.allocator:make,makeArray,dispose;
+shared Mallocator mallocator;
+import core.bitop;
+shared static this(){
+	mallocator=Mallocator.instance;
+}
 
-
+size_t nextPow2(size_t num){
+	return 1<< bsr(num)+1;
+}
 
 void printException(Exception e, int maxStack = 4) {
 	writeln("Exception message: ", e.msg);
@@ -50,30 +60,20 @@ void dummyLoad(){
 void testMultithreaded(void delegate() func,uint threadsCount=0){
 	if(threadsCount==0)
 		threadsCount=threadsPerCPU;
-	Thread[] threadPool;
+	Thread[] threadPool=mallocator.makeArray!(Thread)(threadsCount);
 	foreach(i;0..threadsCount){
-		Thread th=new Thread(func);
+		Thread th=mallocator.make!Thread(func);
 		th.name=i.to!string;//maybe there is better way to pass data to a thread?
-		threadPool~=th;
+		threadPool[i]=th;
 	}
-	foreach(thread;threadPool){
-		thread.start();
-	}
-	foreach(thread;threadPool){
-		thread.join();
-	}
+	foreach(thread;threadPool)thread.start();
+	foreach(thread;threadPool)thread.join();
+	foreach(thread;threadPool)mallocator.dispose(thread);
+	mallocator.dispose(threadPool);
 
+	
 }
 
-unittest{
-	int[] a=[];
-	/*writeln(a.iterateWithRandom);
-	writeln(a.iterateWithRandom);
-	writeln(a.iterateWithRandom);
-	writeln(a.iterateWithRandom);
-	writeln(a.iterateWithRandom);
-	writeln(a.iterateWithRandom);*/
-}
 
 import core.atomic;
 import core.sync.mutex;
@@ -85,20 +85,20 @@ class BucketAllocator(uint bucketSize){
 	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
 
-	struct Bucket{
+	static struct Bucket{
 		union{
 			void[bucketSize] data;
 			Bucket* next;
 		}
 	}
-	enum bucketsNum=1282;
+	enum bucketsNum=128;
 	Mutex mutex;
 
-
+	
 	static struct BucketsArray{
 		Bucket[bucketsNum] buckets;
 		shared Bucket* empty;
-		void init() shared {
+		void initialize() shared {
 			shared Bucket* last;
 			foreach(i,ref bucket;buckets){
 				bucket.next=last;
@@ -120,15 +120,20 @@ class BucketAllocator(uint bucketSize){
 		}
 	}
 
-	shared BucketsArray*[] bucketArrays;
+	 Vector!(shared BucketsArray*) bucketArrays;
 
 	this(){
-		mutex=new Mutex;
+		bucketArrays=mallocator.make!(Vector!(shared BucketsArray*));
+		mutex=mallocator.make!(Mutex);
 		extend();
 	}
+
+	~this(){
+		mallocator.dispose(mutex);
+	}
 	void extend(){
-		shared BucketsArray* arr=new shared BucketsArray();
-		(*arr).init();
+		shared BucketsArray* arr=cast(shared BucketsArray*)mallocator.make!(BucketsArray);
+		(*arr).initialize();
 		bucketArrays~=arr;
 	}
 
