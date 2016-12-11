@@ -194,10 +194,9 @@ FiberData getFiberData(){
 	assertLock(fiber !is null);
 	return FiberData(fiber,jobManagerThreadNum);
 }
-align (64) class Counter{
+struct Counter{
 	align (64)shared uint count;
 	align (64)FiberData waitingFiber;
-	this(){}
 	this(uint count){
 		this.count=count;
 	}
@@ -219,10 +218,10 @@ struct UniversalJob(Delegate){
 	UnDelegate unDel;
 	JobDelegate runDel;
 	JobDelegate* delPointer;
-	Counter counter;
+	Counter* counter;
 	void run(){	
 		unDel.callAndSaveReturn();
-		if(counter !is null){
+		if(counter.waitingFiber!=counter.waitingFiber.init){
 			counter.decrement();
 		}
 	}
@@ -235,16 +234,14 @@ struct UniversalJob(Delegate){
 
 }
 
-import std.experimental.allocator;
 import core.stdc.stdlib;
-import std.typecons:scoped;
 auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	UniversalJob!(Delegate) unJob;
 	unJob.init(del,args);
-	auto counter=scoped!(Counter);
+	Counter counter;
 	counter.count=1;
 	counter.waitingFiber=getFiberData();
-	unJob.counter=counter;
+	unJob.counter=&counter;
 	jobManager.waitingJobs.add(unJob.delPointer);
 	jobManager.debugHelper.jobsAddedUp();
 	Fiber.yield();
@@ -274,13 +271,10 @@ struct UniversalJobGroup(Delegate){
 	//returns range so you can allocate it as you want
 	//but remember that data is stack allocated
 	auto wait(){
-
-		//counter=new Counter;
-		mixin(stackAllocateClass("counter"));
 		counter.count=jobsNum;
 		counter.waitingFiber=getFiberData();
 		foreach(ref unDel;unJobs){
-			unDel.counter=counter;
+			unDel.counter=&counter;
 		}
 		jobManager.addJobs(dels);
 		Fiber.yield();
@@ -291,37 +285,37 @@ struct UniversalJobGroup(Delegate){
 
 	}
 }
-string stackAllocateClass(string varName){
-	string code=format(
-		"
-	    import std.traits:classInstanceAlignment;
-		alias ___varType%s=typeof(%s);
-        static assert((is(___varType%s==class)));
-        auto ___aligment%s=classInstanceAlignment!___varType%s;
-        auto ___size%s=___varType%s.classinfo.init.length+___aligment%s;//Not sure what i am doing
-       
-		void[] ___varMemory%s=alloca(___size%s)[0..___size%s];
-		%s=___varMemory%s[cast(size_t)___varMemory%s.ptr%%___aligment%s..$].emplace!(___varType%s);
-
-	",  varName,varName,varName,varName,
-		varName,varName,varName,varName,
-		varName,varName,varName,varName,
-		varName,varName,varName,varName,
-		);
-	return code;
-}
 
 
-//has to be a mixin because the code has to be executed in calling .... (calloc)
+//has to be a mixin because the code has to be executed in calling .... (alloca)
 string getStackMemory(string varName){
-	string code=format(
-		"
-	uint ___jobsNum=%s.jobsNum;
-	%s.UnJob* ___unJobsMemory=cast(%s.UnJob*)alloca(%s.UnJob.sizeof*___jobsNum);//TODO aligment?
-	JobDelegate** ___delsMemory=cast(JobDelegate**)alloca((JobDelegate*).sizeof*___jobsNum);//TODO aligment?
-	%s.unJobs=___unJobsMemory[0..___jobsNum];
-	%s.dels=___delsMemory[0..___jobsNum];
-		",varName,varName,varName,varName,varName,varName);
+	string code=format(		"
+	uint ___jobsNum%s=%s.jobsNum;
+	%s.UnJob* ___unJobsMemory%s;
+	JobDelegate** ___delsMemory%s;
+	bool ___useStack%s=___jobsNum%s<200;
+
+	scope(exit){if(!___useStack%s){
+	   free(___unJobsMemory%s);
+	   free(___delsMemory%s);
+	}}
+
+    if(___useStack%s){
+		___unJobsMemory%s=cast(%s.UnJob*)alloca(%s.UnJob.sizeof*___jobsNum%s);//TODO aligment?
+		___delsMemory%s=cast(JobDelegate**)alloca((JobDelegate*).sizeof*___jobsNum%s);//TODO aligment?
+    }else{
+		___unJobsMemory%s=cast(%s.UnJob*)malloc(%s.UnJob.sizeof*___jobsNum%s);//TODO aligment?
+		___delsMemory%s=cast(JobDelegate**)malloc((JobDelegate*).sizeof*___jobsNum%s);//TODO aligment?
+    }
+	%s.unJobs=___unJobsMemory%s[0..___jobsNum%s];
+	%s.dels=___delsMemory%s[0..___jobsNum%s];
+		",varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,varName);
 	return code;
 
 	
@@ -390,7 +384,7 @@ void simpleYield(){
 }
 
 void testPerformance(){		
-	uint iterations=10000;
+	uint iterations=1000;
 	uint packetSize=100;
 	StopWatch sw;
 	sw.start();
