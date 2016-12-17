@@ -48,12 +48,12 @@ class CacheVector{
 		static void dummy(){}
 		auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
 		fiber.call();
-		assertLock(fiber.state==Fiber.State.TERM);
+		assert(fiber.state==Fiber.State.TERM);
 		return fiber;
 	}
 	shared(DataStruct[])  extendArray(uint length,shared DataStruct[] oldDataArray){
 		DataStruct[] array;
-		assertLock(length>oldDataArray.length);
+		assert(length>oldDataArray.length);
 
 		uint size=cast(uint)DataStruct.sizeof*length;
 		uint oldSize=cast(uint)(DataStruct.sizeof*oldDataArray.length);
@@ -169,11 +169,11 @@ import std.conv:to;
 
 //test extend
 unittest{
-	CacheVector vec=new CacheVector(1);assertLock(vec.dataArray.length==1);
-	vec.dataArray=vec.extendArray(2,vec.dataArray);assertLock(vec.dataArray.length==2);
-	vec.dataArray=vec.extendArray(3,vec.dataArray);assertLock(vec.dataArray.length==3);
-	vec.dataArray=vec.extendArray(4,vec.dataArray);assertLock(vec.dataArray.length==4);
-	vec.dataArray=vec.extendArray(50,vec.dataArray);assertLock(vec.dataArray.length==50);
+	CacheVector vec=new CacheVector(1);assert(vec.dataArray.length==1);
+	vec.dataArray=vec.extendArray(2,vec.dataArray);assert(vec.dataArray.length==2);
+	vec.dataArray=vec.extendArray(3,vec.dataArray);assert(vec.dataArray.length==3);
+	vec.dataArray=vec.extendArray(4,vec.dataArray);assert(vec.dataArray.length==4);
+	vec.dataArray=vec.extendArray(50,vec.dataArray);assert(vec.dataArray.length==50);
 }
 
 //test get + extend
@@ -186,9 +186,9 @@ unittest{
 	CacheVector vec=new CacheVector(10);
 	T var;
 	foreach(i;0..10){
-		var=vec.getData();assertLock(vec.dataArray.length==10);
+		var=vec.getData();assert(vec.dataArray.length==10);
 	}
-	var=vec.getData();assertLock(vec.dataArray.length==20);
+	var=vec.getData();assert(vec.dataArray.length==20);
 }
 void dummyCall(){}
 //test multithreaded
@@ -198,7 +198,8 @@ void testCV(){
 		registerMemoryErrorHandler();
 	}
 	shared uint sum;
-	CacheVector vec=new CacheVector(1);
+	CacheVector vec=mallocator.make!CacheVector(1);
+	scope(exit)mallocator.dispose(vec);
 	immutable uint firstLoop=10000;
 	immutable uint secondLoop=8;
 	void testGet(){
@@ -302,7 +303,7 @@ void testCV(){
 		testMultithreaded(&testRemove,16);
 		sw.stop();  
 		foreach(i,data;vec.dataArray){
-			assertLock(!data.used);
+			assert(!data.used);
 		}
 		writefln( "R1 Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
 	}
@@ -316,7 +317,7 @@ void testCV(){
 		testMultithreaded(&testRemove2,16);
 		sw.stop();  
 		foreach(i,data;vec.dataArray){
-			assertLock(!data.used);
+			assert(!data.used);
 		}
 		writeln(vec.dataGot);
 		writeln(vec.dataArray.length);

@@ -71,7 +71,7 @@ public:
 			void[] memory=allocator.allocate();
 			Node* tmp = memory.emplace!(Node)( t );
 		}else{
-			//assertLock(memory.ptr==tmp);
+			//assert(memory.ptr==tmp);
 			Node* tmp = new Node(t);
 		}
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
@@ -107,7 +107,6 @@ public:
 			lastInChain=tmp[$-1];
 			
 		}
-		dummyLoad();
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
 		last.next = firstInChain;		 		// publish to consumers
 		last = lastInChain;		 		// swing last forward
@@ -117,7 +116,6 @@ public:
 
 	
 	T pop(  ) {
-		dummyLoad();
 		while( !cas(&consumerLock,cast(LockType)false,cast(LockType)true ) ) { }	 // acquire exclusivity
 
 		

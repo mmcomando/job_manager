@@ -31,30 +31,15 @@ void printException(Exception e, int maxStack = 4) {
 	writeln("--------------");
 }
 void printStack(){
+	static immutable Exception exc=new Exception("Dummy");
 	try{
-		throw new Exception("Dummy");
+		throw exc;
 	}catch(Exception e ){
 		printException(e);
 	}
 }
 
-//simple assert stopped/killed?? thread and printed nothing so not very useful
-void assertLock(bool ok,string file=__FILE__,int line=__LINE__){
-	if(!ok){
-		printStack();
-		while(1){
-			writefln("assert failed, thread: %s file: %s line: %s",Thread.getThis.id,file,line);
-			Thread.sleep(1000.msecs);
-		}
-	}
-}
-uint dummyNum=0;
-uint dummySum;
-void dummyLoad(){
-	//foreach(i;0..jobManagerThreadNum*dummyNum){
-	//	dummySum+=uniform(0,12331);
-	//}
-}
+
 //useful for testing if function is safe in multthreated enviroment
 //name can be used as id
 void testMultithreaded(void delegate() func,uint threadsCount=0){
@@ -185,7 +170,7 @@ class BucketAllocator(uint bucketSize){
 			}while(!cas(&bucketsArray.empty,emptyBucket,bucket));
 			return;
 		}
-		assertLock(0);
+		assert(0);
 	}
 
 	uint usedSlots(){
@@ -219,13 +204,17 @@ unittest{
 }
 import std.datetime;
 void testAL(){
-	BucketAllocator!(64) allocator=new BucketAllocator!(64);
+	BucketAllocator!(64) allocator=mallocator.make!(BucketAllocator!(64));
+	scope(exit)mallocator.dispose(allocator);
 	shared ulong sum;
 	void test(){
 		foreach(k;0..100){
 			void[][] memories;
-			foreach(i;0..uniform(130,140)){
-				memories~=allocator.allocate();
+			uint rand=uniform(130,140);
+			memories=mallocator.makeArray!(void[])(rand);
+			scope(exit)mallocator.dispose(memories);
+			foreach(i;0..rand){
+				memories[i]=allocator.allocate();
 			}
 			foreach(m;memories){
 				allocator.deallocate(m);

@@ -100,6 +100,11 @@ class JobManager{
 			foreach(yes;threadWorking){
 				wait=wait || yes;
 			}
+			foreach(th;threadPool){
+				if(!th.isRunning){
+					wait=false;
+				}
+			}
 			Thread.sleep(100.msecs);
 		}while(wait);
 	}
@@ -111,8 +116,8 @@ class JobManager{
 	}
 	
 	void addFiber(FiberData fiberData){
-		assertLock(waitingFibers.length==threadPool.length);
-		assertLock(fiberData.fiber.state!=Fiber.State.TERM);
+		assert(waitingFibers.length==threadPool.length);
+		assert(fiberData.fiber.state!=Fiber.State.TERM);
 		waitingFibers[fiberData.threadNum].add(fiberData);
 		debugHelper.fibersAddedUp();
 
@@ -145,7 +150,7 @@ class JobManager{
 				debugHelper.jobsDoneUp();
 				static if(useCache){
 					fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
-					assertLock(fiber.state==Fiber.State.TERM);
+					assert(fiber.state==Fiber.State.TERM);
 					fiber.reset(*job);
 				}else{
 					if(lastFreeFiber is null){
@@ -166,7 +171,7 @@ class JobManager{
 		}
 		//do the job
 		threadWorking[jobManagerThreadNum]=true;
-		assertLock(fiber.state==Fiber.State.HOLD);
+		assert(fiber.state==Fiber.State.HOLD);
 		fiber.call();
 
 		//reuse fiber
@@ -196,7 +201,7 @@ struct FiberData{
 }
 FiberData getFiberData(){
 	Fiber fiber=Fiber.getThis();
-	assertLock(fiber !is null);
+	assert(fiber !is null);
 	return FiberData(fiber,jobManagerThreadNum);
 }
 struct Counter{
@@ -268,7 +273,7 @@ struct UniversalJobGroup(Delegate){
 		this.jobsNum=jobsNum;
 	}
 	void add(Delegate del,Parameters!(Delegate) args){
-		assertLock(unJobs.length>0 && jobsAdded<jobsNum);
+		assert(unJobs.length>0 && jobsAdded<jobsNum);
 		unJobs[jobsAdded].init(del,args);
 		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
 		jobsAdded++;
@@ -355,7 +360,7 @@ void testFiberLockingToThread(){
 	foreach(i;0..1000){
 		jobManager.addFiber(fiberData);
 		Fiber.yield();
-		assertLock(id==Thread.getThis.id);
+		assert(id==Thread.getThis.id);
 	}
 }
 
@@ -403,16 +408,16 @@ void testPerformance(){
 	foreach(i;0..iterations){
 		group.wait();
 	}
-	assertLock(jobManager.debugHelper.jobsAdded==iterations*packetSize);
-	assertLock(jobManager.debugHelper.jobsDone ==iterations*packetSize);
-	assertLock(jobManager.debugHelper.fibersAdded==iterations*packetSize+iterations);
-	assertLock(jobManager.debugHelper.fibersDone ==iterations*packetSize+iterations);
+	assert(jobManager.debugHelper.jobsAdded==iterations*packetSize);
+	assert(jobManager.debugHelper.jobsDone ==iterations*packetSize);
+	assert(jobManager.debugHelper.fibersAdded==iterations*packetSize+iterations);
+	assert(jobManager.debugHelper.fibersDone ==iterations*packetSize+iterations);
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms], %s[it/ms]",iterations,packetSize,sw.peek().msecs,iterations*packetSize/sw.peek().msecs);
 }
 import gl3n.linalg;
 void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){
-	assertLock(mA.length==mB.length && mB.length==mC.length);
+	assert(mA.length==mB.length && mB.length==mC.length);
 	foreach(i;0..mA.length){
 		foreach(k;0..1){
 			mC[i]=mB[i]*mB[i];
@@ -426,10 +431,15 @@ void testPerformanceMatrix(){
 	uint partsNum=16;
 	uint iterations=10000;	
 	uint matricesNum=512;
-	assertLock(matricesNum%partsNum==0);
-	mat4[] matricesA=new mat4[matricesNum];
-	mat4[] matricesB=new mat4[matricesNum];
-	mat4[] matricesC=new mat4[matricesNum];
+	assert(matricesNum%partsNum==0);
+	mat4[] matricesA=mallocator.makeArray!mat4(matricesNum);
+	mat4[] matricesB=mallocator.makeArray!mat4(matricesNum);
+	mat4[] matricesC=mallocator.makeArray!mat4(matricesNum);
+	scope(exit){
+		mallocator.dispose(matricesA);
+		mallocator.dispose(matricesB);
+		mallocator.dispose(matricesC);
+	}
 	StopWatch sw;
 	sw.start();
 	jobManager.debugHelper.resetCounters();
@@ -466,10 +476,10 @@ void test(uint threadsNum=16){
 		
 		/*jobManager.debugHelper.resetCounters();
 		 int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
-		 assertLock(jobManager.debugHelper.jobsAdded==jobsRun+1);
-		 assertLock(jobManager.debugHelper.jobsDone==jobsRun+1);
-		 assertLock(jobManager.debugHelper.fibersAdded==jobsRun+2);
-		 assertLock(jobManager.debugHelper.fibersDone==jobsRun+2);*/
+		 assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
+		 assert(jobManager.debugHelper.jobsDone==jobsRun+1);
+		 assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
+		 assert(jobManager.debugHelper.fibersDone==jobsRun+2);*/
 	}
 	//writeln("Start JobManager test");
 	jobManager.init(threadsNum);
@@ -477,12 +487,14 @@ void test(uint threadsNum=16){
 	jobManager.addJob(&del);
 	jobManager.start();
 	jobManager.waitForEnd();
+	//Thread.sleep(2.seconds);
 	jobManager.end();
 	//writeln("End JobManager test");
 }
 void testScalability(){
 	foreach(i;0..16){
-		jobManager=new JobManager;
+		jobManager=mallocator.make!JobManager;
+		scope(exit)mallocator.dispose(jobManager);
 		write(i+1," ");
 		test(i+1);
 		if(i==0)base=result;
