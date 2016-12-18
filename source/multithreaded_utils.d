@@ -15,6 +15,12 @@ shared static this(){
 	mallocator=Mallocator.instance;
 }
 
+void freeData(void[] data){
+	//0xFFFFFF propably onvalid value for pointers and other types
+	memset(cast(void*)data.ptr,0xFFFFFFFF,data.length);//very important :) makes bugs show up xD 
+	free(cast(void*)data.ptr);
+}
+
 size_t nextPow2(size_t num){
 	return 1<< bsr(num)+1;
 }
@@ -104,11 +110,12 @@ class BucketAllocator(uint bucketSize){
 			return bucketsNum-freeSlots;
 		}
 	}
+	alias BucketArraysType=Vector!(shared BucketsArray*);
 
-	 Vector!(shared BucketsArray*) bucketArrays;
-
+	//shared BucketsArray*[] bucketArrays;
+	BucketArraysType bucketArrays;
 	this(){
-		bucketArrays=mallocator.make!(Vector!(shared BucketsArray*));
+		bucketArrays=mallocator.make!(BucketArraysType);
 		mutex=mallocator.make!(Mutex);
 		extend();
 	}
@@ -116,14 +123,22 @@ class BucketAllocator(uint bucketSize){
 	~this(){
 		mallocator.dispose(mutex);
 	}
+	void[] oldData;
 	void extend(){
+		//shared BucketsArray* arr=new shared BucketsArray;
 		shared BucketsArray* arr=cast(shared BucketsArray*)mallocator.make!(BucketsArray);
 		(*arr).initialize();
+		if(!bucketArrays.canAddWithoutRealloc){
+			if(oldData !is null){
+				freeData(oldData);//free on next alloc, noone should use the old array
+			}
+			oldData=bucketArrays.manualExtend();
+		}
 		bucketArrays~=arr;
 	}
 
 	void[] allocate(){
-	FF:foreach(bucketsArray;bucketArrays){
+	FF:foreach(i,bucketsArray;bucketArrays){
 			if(bucketsArray.empty is null)continue;
 
 			shared Bucket* emptyBucket;
@@ -140,6 +155,7 @@ class BucketAllocator(uint bucketSize){
 			atomicStore(bucketsArray.empty,emptyBucket.next);
 			return cast(void[])emptyBucket.data;
 		}
+
 		//assert(0);
 		synchronized(mutex){
 			extend();
@@ -170,6 +186,7 @@ class BucketAllocator(uint bucketSize){
 			}while(!cas(&bucketsArray.empty,emptyBucket,bucket));
 			return;
 		}
+		writeln(data.ptr);
 		assert(0);
 	}
 
@@ -183,7 +200,7 @@ class BucketAllocator(uint bucketSize){
 
 
 
-unittest{
+void ttt(){
 	BucketAllocator!(64) allocator=new BucketAllocator!(64);
 	foreach(k;0..123){
 		void[][] memories;

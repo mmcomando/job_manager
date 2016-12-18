@@ -71,7 +71,6 @@ public:
 			void[] memory=allocator.allocate();
 			Node* tmp = memory.emplace!(Node)( t );
 		}else{
-			//assert(memory.ptr==tmp);
 			Node* tmp = new Node(t);
 		}
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
@@ -241,17 +240,24 @@ public:
 	}
 
 	void extend(size_t newNumOfElements){
+		auto oldArray=manualExtend(newNumOfElements);
+		if(oldArray !is null){
+			freeData(oldArray);
+		}
+	}
+	void[] manualExtend(size_t newNumOfElements=0){
+		if(newNumOfElements==0)newNumOfElements=array.length*2;
 		T[] oldArray=array;
 		size_t oldSize=oldArray.length*T.sizeof;
 		size_t newSize=newNumOfElements*T.sizeof;
 		T* memory=cast(T*)malloc(newSize);
 		memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
 		array=memory[0..newNumOfElements];
-
-		if(oldArray !is null){
-			memset(cast(void*)oldArray.ptr,0,oldArray.length*T.sizeof);
-			free(cast(void*)oldArray.ptr);
-		}
+		return cast(void[])oldArray;
+		
+	}
+	bool canAddWithoutRealloc(uint elemNum=1){
+		return used+elemNum<=array.length;
 	}
 
 	void add( T  t ) {
@@ -301,7 +307,6 @@ public:
 	}
 	
 }
-
 unittest{
 	Vector!int vec=new Vector!int;
 	assert(vec.empty);
