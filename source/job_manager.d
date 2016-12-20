@@ -89,12 +89,22 @@ class JobManager{
 	}
 	void startMainLoop(JobDelegate mainLoop,uint threadsCount=0){
 		bool endLoop=false;
-		void helper(){
-			mainLoop();
-			endLoop=true;
+		static struct NoGcDelegateHelper
+		{
+			this(JobDelegate del,ref bool end){
+				this.del=del;
+				endPointer=&end;
+			}
+			JobDelegate del;
+			bool* endPointer;
+			void call() { 
+				del();
+				*endPointer=true;			
+			}
 		}
+		NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
 		init(threadsCount);
-		auto del=&helper;
+		auto del=&helper.call;
 		addJob(&del);
 		start();
 		waitForEnd(endLoop);
@@ -473,12 +483,7 @@ void testPerformanceMatrix(){
 	writefln( "BenchmarkMatrix: %s*%s : %s[us], %s[it/us] %s",iterations,matricesNum,sw.peek().usecs,cast(float)iterations*matricesNum/sw.peek().usecs,result/base);
 }
 void test(uint threadsNum=16){
-	import core.memory;
-	//GC.disable();
-	version(DigitalMars){
-		import etc.linux.memoryerror;
-		//registerMemoryErrorHandler();
-	}
+
 
 	void startTest(){
 		alias UnDel=void delegate();
@@ -504,7 +509,7 @@ void test(uint threadsNum=16){
 	//writeln("End JobManager test");
 }
 void testScalability(){
-	foreach(i;2..8){
+	foreach(i;4..16){
 		jobManager=mallocator.make!JobManager;
 		scope(exit)mallocator.dispose(jobManager);
 		write(i+1," ");

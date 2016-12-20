@@ -2,6 +2,8 @@
 
 import core.thread;
 import core.cpuid:threadsPerCPU;
+import core.stdc.string:memset,memcpy;
+import core.stdc.stdlib:malloc,free;
 import std.stdio:writeln,writefln;
 import std.conv:to;
 import std.random:uniform;
@@ -201,7 +203,8 @@ class BucketAllocator(uint bucketSize){
 
 
 void ttt(){
-	BucketAllocator!(64) allocator=new BucketAllocator!(64);
+	BucketAllocator!(64) allocator=mallocator.make!(BucketAllocator!64);
+	scope(exit)mallocator.dispose(allocator);
 	foreach(k;0..123){
 		void[][] memories;
 		assert(allocator.bucketArrays[0].freeSlots==allocator.bucketsNum);
@@ -225,7 +228,7 @@ void testAL(){
 	scope(exit)mallocator.dispose(allocator);
 	shared ulong sum;
 	void test(){
-		foreach(k;0..100){
+		foreach(k;0..1000){
 			void[][] memories;
 			uint rand=uniform(130,140);
 			memories=mallocator.makeArray!(void[])(rand);
@@ -244,13 +247,17 @@ void testAL(){
 			allocator.allocate();
 		}
 	}
-	StopWatch sw;
-	sw.start();
-	testMultithreaded(&test,16);
-	sw.stop();  	
-	writefln( "Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
+	foreach(i;0..10000){
+		sum=0;
+		StopWatch sw;
+		sw.start();
+		testMultithreaded(&test,16);
+		sw.stop();  	
+		writefln( "Benchmark: %s %s[ms], %s[it/ms]",sum,sw.peek().msecs,sum/sw.peek().msecs);
+		
+		assert(allocator.usedSlots==0);
+	}
 
-	assert(allocator.usedSlots==0);
 }
 unittest{
 	//testAL();
