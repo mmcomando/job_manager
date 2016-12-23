@@ -2,6 +2,7 @@ import std.stdio;
 import job_manager;
 import cache_vector;
 import multithreaded_utils;
+import job_vector;
 void main()
 {
 	import core.memory;
@@ -11,9 +12,9 @@ void main()
 		registerMemoryErrorHandler();
 	}
 	version(unittest){}else{
-		foreach(i;0..10)
-		testScalability();
-		//testScalability();
+		//foreach(i;0..10000)testLLQ();
+		//
+		foreach(i;0..10000)testScalability();
 		//testCV();
 		//testAL();
 	}

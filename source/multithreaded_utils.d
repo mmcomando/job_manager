@@ -17,13 +17,13 @@ shared static this(){
 	mallocator=Mallocator.instance;
 }
 
-void freeData(void[] data){
+@nogc void freeData(void[] data){
 	//0xFFFFFF propably onvalid value for pointers and other types
 	memset(cast(void*)data.ptr,0xFFFFFFFF,data.length);//very important :) makes bugs show up xD 
 	free(cast(void*)data.ptr);
 }
 
-size_t nextPow2(size_t num){
+@nogc @safe nothrow size_t nextPow2(size_t num){
 	return 1<< bsr(num)+1;
 }
 

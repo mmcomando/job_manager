@@ -147,18 +147,20 @@ class JobManager{
 		debugHelper.jobsAddedAdd(cast(int)dels.length);
 		waitingJobs.add(dels);
 	}
-
+	import core.memory;
+	
 	static Fiber lastFreeFiber;//1 element tls cache
-	enum bool useCache=false;//may be bugged and for simple scenario simple 1 element backup is even faster. I think in real scenario cache should be faster
+	enum bool useCache=true;//may be bugged and for simple scenario simple 1 element backup is even faster. I think in real scenario cache should be faster
 	Fiber allocateFiber(JobDelegate del){
 		Fiber fiber;
 		static if(useCache){
 			fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
 			assert(fiber.state==Fiber.State.TERM);
-			fiber.reset(*job);
+			fiber.reset(del);
 		}else{
 			if(lastFreeFiber is null){
 				fiber= mallocator.make!Fiber( del);
+				GC.addRoot(cast(void*)fiber);
 			}else{
 				fiber=lastFreeFiber;
 				lastFreeFiber=null;
@@ -172,6 +174,7 @@ class JobManager{
 			fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
 		}else{
 			if(lastFreeFiber !is null){
+				GC.removeRoot(cast(void*)lastFreeFiber);
 				mallocator.dispose(lastFreeFiber);
 			}
 			lastFreeFiber=fiber;
@@ -258,7 +261,7 @@ struct UniversalJob(Delegate){
 		}
 	}
 
-	void init(Delegate del,Parameters!(Delegate) args){
+	void initialize(Delegate del,Parameters!(Delegate) args){
 		unDel=makeUniversalDelegate!(Delegate)(del,args);
 		runDel=&run;
 		delPointer=&runDel;
@@ -268,7 +271,7 @@ struct UniversalJob(Delegate){
 
 auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	UniversalJob!(Delegate) unJob;
-	unJob.init(del,args);
+	unJob.initialize(del,args);
 	Counter counter;
 	counter.count=1;
 	counter.waitingFiber=getFiberData();
@@ -295,7 +298,7 @@ struct UniversalJobGroup(Delegate){
 	}
 	void add(Delegate del,Parameters!(Delegate) args){
 		assert(unJobs.length>0 && jobsAdded<jobsNum);
-		unJobs[jobsAdded].init(del,args);
+		unJobs[jobsAdded].initialize(del,args);
 		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
 		jobsAdded++;
 	}
@@ -322,15 +325,36 @@ struct UniversalJobGroup(Delegate){
 string getStackMemory(string varName){
 	string code=format(		"
 	uint ___jobsNum%s=%s.jobsNum;
+	
+	%s.unJobs=mallocator.makeArray!(%s.UnJob)(___jobsNum%s);
+	%s.dels=mallocator.makeArray!(JobDelegate*)(___jobsNum%s);
+
+	
+
+    scope(exit){
+       memset(%s.unJobs.ptr,0,%s.UnJob.sizeof*___jobsNum%s);
+       memset(%s.dels.ptr,0,(JobDelegate*).sizeof*___jobsNum%s);
+	   mallocator.dispose(%s.unJobs);
+	   mallocator.dispose(%s.dels);
+	}
+
+
+		",varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName);
+	return code;
+	
+	
+}
+string getStackMemory2(string varName){
+	string code=format(		"
+	uint ___jobsNum%s=%s.jobsNum;
 	%s.UnJob* ___unJobsMemory%s;
 	JobDelegate** ___delsMemory%s;
-	bool ___useStack%s=___jobsNum%s<200;
+	bool ___useStack%s=false;//___jobsNum%s<200;
 
-	scope(exit){if(!___useStack%s){
-	   free(___unJobsMemory%s);
-	   free(___delsMemory%s);
-	}}
-
+	
     if(___useStack%s){
 		___unJobsMemory%s=cast(%s.UnJob*)alloca(%s.UnJob.sizeof*___jobsNum%s);//TODO aligment?
 		___delsMemory%s=cast(JobDelegate**)alloca((JobDelegate*).sizeof*___jobsNum%s);//TODO aligment?
@@ -338,6 +362,15 @@ string getStackMemory(string varName){
 		___unJobsMemory%s=cast(%s.UnJob*)malloc(%s.UnJob.sizeof*___jobsNum%s);//TODO aligment?
 		___delsMemory%s=cast(JobDelegate**)malloc((JobDelegate*).sizeof*___jobsNum%s);//TODO aligment?
     }
+
+    scope(exit){if(!___useStack%s){
+       memset(___unJobsMemory%s,0,%s.UnJob.sizeof*___jobsNum%s);
+       memset(___delsMemory%s,0,(JobDelegate*).sizeof*___jobsNum%s);
+	   free(___unJobsMemory%s);
+	   free(___delsMemory%s);
+	}}
+
+
 	%s.unJobs=___unJobsMemory%s[0..___jobsNum%s];
 	%s.dels=___delsMemory%s[0..___jobsNum%s];
 		",varName,varName,varName,varName,
@@ -346,9 +379,11 @@ string getStackMemory(string varName){
 		varName,varName,varName,varName,
 		varName,varName,varName,varName,
 		varName,varName,varName,varName,
-		varName,varName,varName,varName,varName);
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName);
 	return code;
-
+	
 	
 }
 
@@ -383,7 +418,7 @@ void testFiberLockingToThread(){
 		assert(id==Thread.getThis.id);
 	}
 }
-
+import core.memory;
 //returns how many jobs it have spawned
 int randomRecursionJobs(int deepLevel){
 	alias UD=UniversalDelegate!(int function(int));
@@ -486,20 +521,20 @@ void test(uint threadsNum=16){
 
 
 	void startTest(){
-		alias UnDel=void delegate();
+	/*	alias UnDel=void delegate();
 		foreach(i;0..1000)
 		callAndWait!(UnDel)((&testPerformance).toDelegate);
 		foreach(i;0..1000)
 		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
 		makeTestJobsFrom(&testFiberLockingToThread,100);
-
-		foreach(i;0..1000){
+*/
+foreach(i;0..1000){
 		jobManager.debugHelper.resetCounters();
-		int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
+		int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,7);
 		assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
 		assert(jobManager.debugHelper.jobsDone==jobsRun+1);
-		writeln(jobManager.debugHelper.fibersAdded," | ",jobsRun+2);
-		writeln(jobManager.debugHelper.fibersDone," | ",jobsRun+2);
+		writeln(atomicLoad(jobManager.debugHelper.fibersAdded)," | ",jobsRun+2);
+			writeln(atomicLoad(jobManager.debugHelper.fibersDone)," | ",jobsRun+2);
 		assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
 		assert(jobManager.debugHelper.fibersDone==jobsRun+2);
 		}

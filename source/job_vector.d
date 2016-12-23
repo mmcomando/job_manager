@@ -26,7 +26,8 @@ private:
 		align (64)  Node* next;//atomic
 	};
 	
-
+	shared uint elementsAdded;
+	shared uint elementsPopped;
 	// for one consumer at a time
 	align (64)  Node* first;
 	// shared among consumers
@@ -77,6 +78,8 @@ public:
 		last.next = tmp;		 		// publish to consumers
 		last = tmp;		 		// swing last forward
 		atomicStore(producerLock,false);		// release exclusivity
+		atomicOp!"+="(elementsAdded,1);
+
 	}
 	void add( T[]  t ) {
 
@@ -109,7 +112,9 @@ public:
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
 		last.next = firstInChain;		 		// publish to consumers
 		last = lastInChain;		 		// swing last forward
-		atomicStore!(MemoryOrder.rel)(producerLock,cast(LockType)false);		// release exclusivity
+		atomicStore(producerLock,cast(LockType)false);		// release exclusivity
+		atomicOp!"+="(elementsAdded,t.length);
+
 	}
 	
 
@@ -124,7 +129,8 @@ public:
 			T result = theNext.value;	 	       	// take it out
 			theNext.value = T.init; 	       	// of the Node
 			first = theNext;		 	       	// swing first forward
-			atomicStore!(MemoryOrder.rel)(consumerLock,cast(LockType)false);	       	// release exclusivity		
+			atomicStore(consumerLock,cast(LockType)false);	       	// release exclusivity		
+			atomicOp!"+="(elementsPopped,1);
 
 			static if(useAllocator){
 				allocator.deallocate(cast(void[])theFirst[0..1]);
@@ -132,13 +138,37 @@ public:
 			return result;	 		// and report success
 		}
 
-		atomicStore!(MemoryOrder.rel)(consumerLock,cast(LockType)false);       	// release exclusivity
+		atomicStore(consumerLock,cast(LockType)false);       	// release exclusivity
 		return T.init; 	// report queue was empty
 	}
 }
 
+import std.functional:toDelegate;
+static int[] tmpArr=[1,1,1,1,1,1];
+void testLLQ(){
+	shared uint addedElements;
+	LowLockQueue!int queue=mallocator.make!(LowLockQueue!int);
+	scope(exit)mallocator.dispose(queue);
 
-
+	void testLLQAdd(){
+		uint popped;
+		foreach(kk;0..1000){
+			uint num=uniform(0,1000);
+			atomicOp!"+="(addedElements,num+num*6);
+			foreach(i;0..num)queue.add(1);
+			foreach(i;0..num)queue.add(tmpArr);
+			foreach(i;0..num+num*6){
+				popped=queue.pop();
+				assert(popped==1);
+			}
+		}
+	}
+	testMultithreaded((&testLLQAdd).toDelegate,4);
+	assert(queue.elementsAdded==addedElements);
+	assert(queue.elementsAdded==queue.elementsPopped);
+	assert(queue.first.next==null);
+	assert(queue.first==queue.last);
+}
 
 
 
@@ -220,6 +250,7 @@ public:
 
 
 class Vector(T){
+@nogc:
 	T[] array;
 	size_t used;
 public:

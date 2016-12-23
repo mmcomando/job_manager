@@ -8,6 +8,5 @@
 	"license": "proprietary",
 	"dflags-dmd": ["-vgc"],
 	"dependencies" : {
-		"gl3n" : ">=0.0.0"
 	},
 }
