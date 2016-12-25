@@ -3,7 +3,6 @@
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
 import core.atomic;
-import core.sync.mutex;
 import core.thread:Fiber,Thread;
 import core.memory;
 import std.conv:emplace;
@@ -15,7 +14,6 @@ import multithreaded_utils;
 //By Herb Sutter
 
 class LowLockQueue(T,LockType=bool) {
-
 	//alias T=void*;
 private:
 	static struct Node {
@@ -60,7 +58,8 @@ public:
 		}
 	}
 
-	
+@nogc:
+
 	bool empty(){
 		return (first.next == null); 
 	}
@@ -178,29 +177,27 @@ void testLLQ(){
 import std.algorithm:remove;
 
 class LockedVectorBuildIn(T){
-	align(64)Mutex mutex;
 	T[] array;
 public:
 	this(){
-		mutex=new Mutex;
 	}
 	bool empty(){
 		return(array.length==0);
 	}	
 	
 	void add( T  t ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			array.assumeSafeAppend~=t;
 		}
 	}	
 	void add( T[]  t ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			array.assumeSafeAppend~=t;
 		}
 	}
 	
 	T pop(  ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			if(array.length==0)return T.init;
 			T obj=array[$-1];
 			array=array.remove(array.length-1);
@@ -211,15 +208,13 @@ public:
 }
 
 class LockedVector(T){
-	align(64)Mutex mutex;
+@nogc:
 	Vector!T array;
 public:
 	this(){
-		mutex=mallocator.make!(Mutex);
 		array=mallocator.make!(Vector!T);
 	}
 	~this(){
-		mallocator.dispose(mutex);
 		mallocator.dispose(array);
 	}
 	bool empty(){
@@ -227,18 +222,18 @@ public:
 	}	
 	
 	void add( T  t ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			array~=t;
 		}
 	}	
 	void add( T[]  t ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			array~=t;
 		}
 	}
 	
 	T pop(  ) {
-		synchronized( mutex ){
+		synchronized( this ){
 			if(array.length==0)return T.init;
 			T obj=array[$-1];
 			array.remove(array.length-1);
@@ -281,9 +276,12 @@ public:
 		T[] oldArray=array;
 		size_t oldSize=oldArray.length*T.sizeof;
 		size_t newSize=newNumOfElements*T.sizeof;
+		//T[] memory=mallocator.makeArray!(T)(newNumOfElements);
+		//memcpy(cast(void*)memory.ptr,cast(void*)oldArray.ptr,oldSize);
+		//array=memory;
 		T* memory=cast(T*)malloc(newSize);
-		memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
-		array=memory[0..newNumOfElements];
+				memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
+				array=memory[0..newNumOfElements];
 		return cast(void[])oldArray;
 		
 	}

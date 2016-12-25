@@ -17,10 +17,24 @@ shared static this(){
 	mallocator=Mallocator.instance;
 }
 
+import std.traits;
+
+// Casts @nogc out of a function or delegate type.
+auto assumeNoGC(T) (T t) if (isFunctionPointer!T || isDelegate!T)
+{
+	enum attrs = functionAttributes!T | FunctionAttribute.nogc;
+	return cast(SetFunctionAttributes!(T, functionLinkage!T, attrs)) t;
+}
+
+void writelnng(T...)(T args){
+	assumeNoGC( (T arg){writeln(arg);})(args);
+}
+
 @nogc void freeData(void[] data){
 	//0xFFFFFF propably onvalid value for pointers and other types
 	memset(cast(void*)data.ptr,0xFFFFFFFF,data.length);//very important :) makes bugs show up xD 
-	free(cast(void*)data.ptr);
+	//mallocator.dispose(data);
+	free(data.ptr);
 }
 
 @nogc @safe nothrow size_t nextPow2(size_t num){
@@ -69,12 +83,12 @@ void testMultithreaded(void delegate() func,uint threadsCount=0){
 
 
 import core.atomic;
-import core.sync.mutex;
 import  std.random:uniform;
 
 
 
 class BucketAllocator(uint bucketSize){
+@nogc:
 	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
 
@@ -85,10 +99,10 @@ class BucketAllocator(uint bucketSize){
 		}
 	}
 	enum bucketsNum=128;
-	Mutex mutex;
 
 	
 	static struct BucketsArray{
+	@nogc:
 		Bucket[bucketsNum] buckets;
 		shared Bucket* empty;
 		void initialize() shared {
@@ -116,14 +130,13 @@ class BucketAllocator(uint bucketSize){
 
 	//shared BucketsArray*[] bucketArrays;
 	BucketArraysType bucketArrays;
+
+
 	this(){
 		bucketArrays=mallocator.make!(BucketArraysType);
-		mutex=mallocator.make!(Mutex);
-		extend();
+		bucketArrays.extend(128);
 	}
-
 	~this(){
-		mallocator.dispose(mutex);
 	}
 	void[] oldData;
 	void extend(){
@@ -159,7 +172,7 @@ class BucketAllocator(uint bucketSize){
 		}
 
 		//assert(0);
-		synchronized(mutex){
+		synchronized(this){
 			extend();
 			auto bucketsArray=bucketArrays[$-1];
 			shared Bucket* empty=bucketsArray.empty;
@@ -188,7 +201,7 @@ class BucketAllocator(uint bucketSize){
 			}while(!cas(&bucketsArray.empty,emptyBucket,bucket));
 			return;
 		}
-		writeln(data.ptr);
+		writelnng(data.ptr);
 		assert(0);
 	}
 

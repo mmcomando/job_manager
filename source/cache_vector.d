@@ -3,7 +3,6 @@
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
 import core.atomic;
-import core.sync.mutex;
 import core.thread:Fiber,Thread;
 import core.memory;
 
@@ -22,18 +21,15 @@ class CacheVector{
 	align (64)shared LoType loaders;
 	shared uint dataGot;
 	shared uint dataRemoved;
-	Mutex mutex;
 
 	this(uint length){
 		assert(length>0);
 		dataArray=extendArray(length,dataArray);
-		mutex=mallocator.make!(Mutex);
 	}
 	~this(){
-		mallocator.dispose(mutex);
 	}
 	void clear(){
-		synchronized(mutex){
+		synchronized(this){
 			auto localSlice=atomicLoad(dataArray);
 			atomicStore(dataArray,null);
 			while(atomicLoad(loaders)!=0){}
@@ -47,6 +43,8 @@ class CacheVector{
 	T initVar(){
 		static void dummy(){}
 		auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		GC.addRoot(cast(void*)fiber);
+
 		fiber.call();
 		assert(fiber.state==Fiber.State.TERM);
 		return fiber;
@@ -102,7 +100,7 @@ class CacheVector{
 			}
 		}
 		//find free slot or extend array
-		synchronized(mutex){
+		synchronized(this){
 			auto sliceCopy=dataArray;
 			atomicStore(dataArray,null);//stop all who is getting data without a lock
 			while(atomicLoad(loaders)!=0){}//wait for them
@@ -145,7 +143,7 @@ class CacheVector{
 				}
 			}
 		}
-		synchronized(mutex){
+		synchronized(this){
 			auto localSlice=atomicLoad(dataArray);
 			foreach(uint i,ref data;localSlice){
 				if(cast(Fiber)data.data==elementToDelete){

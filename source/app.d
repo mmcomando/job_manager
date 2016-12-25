@@ -14,7 +14,7 @@ void main()
 	version(unittest){}else{
 		//foreach(i;0..10000)testLLQ();
 		//
-		foreach(i;0..10000)testScalability();
+		foreach(i;0..100)testScalability();
 		//testCV();
 		//testAL();
 	}

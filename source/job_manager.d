@@ -2,8 +2,8 @@
 
 import core.atomic;
 import core.cpuid:threadsPerCPU;
-import core.sync.mutex;
 import core.stdc.stdlib;
+import core.stdc.string:memset;
 import core.thread:Thread,ThreadID,sleep,Fiber;
 import std.algorithm:remove;
 import std.conv:to;
@@ -88,18 +88,18 @@ class JobManager{
 		startMainLoop(mainLoop.toDelegate,threadsCount);
 	}
 	void startMainLoop(JobDelegate mainLoop,uint threadsCount=0){
-		bool endLoop=false;
+		shared bool endLoop=false;
 		static struct NoGcDelegateHelper
 		{
-			this(JobDelegate del,ref bool end){
+			this(JobDelegate del,ref shared bool end){
 				this.del=del;
 				endPointer=&end;
 			}
 			JobDelegate del;
-			bool* endPointer;
+			shared bool* endPointer;
 			void call() { 
 				del();
-				*endPointer=true;			
+				atomicStore(*endPointer,true);			
 			}
 		}
 		NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
@@ -111,10 +111,10 @@ class JobManager{
 		end();
 	}
 	//rather bad function because, there may be fibers in some external manager
-	void waitForEnd(ref bool end){
+	void waitForEnd(ref shared bool end){
 		bool wait=true;
 		do{
-			wait= !end;
+			wait= !atomicLoad(end);
 			foreach(th;threadPool){
 				if(!th.isRunning){
 					wait=false;
@@ -148,7 +148,7 @@ class JobManager{
 		waitingJobs.add(dels);
 	}
 	import core.memory;
-	
+	uint fibersMade;
 	static Fiber lastFreeFiber;//1 element tls cache
 	enum bool useCache=true;//may be bugged and for simple scenario simple 1 element backup is even faster. I think in real scenario cache should be faster
 	Fiber allocateFiber(JobDelegate del){
@@ -160,6 +160,7 @@ class JobManager{
 		}else{
 			if(lastFreeFiber is null){
 				fiber= mallocator.make!Fiber( del);
+				fibersMade++;
 				GC.addRoot(cast(void*)fiber);
 			}else{
 				fiber=lastFreeFiber;
@@ -239,11 +240,17 @@ struct Counter{
 		if(waitingFiber.fiber is null){
 			return;
 		}
+		if(count>9000){
+			writeln("AAAAAAAAAAAAAAAAA");
+			assert(0);
+		}
 		atomicOp!"-="(count, 1);
-		bool ok=cas(&count,0,1000);
+		bool ok=cas(&count,0,10000);
 		if(ok){
 			jobManager.addFiber(waitingFiber);
+			waitingFiber.fiber=null;
 		}
+
 		
 	}
 }
@@ -256,7 +263,7 @@ struct UniversalJob(Delegate){
 	Counter* counter;
 	void run(){	
 		unDel.callAndSaveReturn();
-		if(counter.waitingFiber!=counter.waitingFiber.init){
+		if(counter !is null && counter.waitingFiber!=counter.waitingFiber.init){
 			counter.decrement();
 		}
 	}
@@ -521,20 +528,22 @@ void test(uint threadsNum=16){
 
 
 	void startTest(){
-	/*	alias UnDel=void delegate();
-		foreach(i;0..1000)
+		alias UnDel=void delegate();
+		foreach(i;0..1)
 		callAndWait!(UnDel)((&testPerformance).toDelegate);
-		foreach(i;0..1000)
+		foreach(i;0..1)
 		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
 		makeTestJobsFrom(&testFiberLockingToThread,100);
-*/
-foreach(i;0..1000){
+
+foreach(i;0..10000){
+		int[] pp=	new int[1000];
 		jobManager.debugHelper.resetCounters();
-		int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,7);
+		int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 		assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
 		assert(jobManager.debugHelper.jobsDone==jobsRun+1);
 		writeln(atomicLoad(jobManager.debugHelper.fibersAdded)," | ",jobsRun+2);
 			writeln(atomicLoad(jobManager.debugHelper.fibersDone)," | ",jobsRun+2);
+			writeln(jobManager.fibersCache.dataArray.length);
 		assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
 		assert(jobManager.debugHelper.fibersDone==jobsRun+2);
 		}
@@ -544,7 +553,7 @@ foreach(i;0..1000){
 	//writeln("End JobManager test");
 }
 void testScalability(){
-	foreach(i;4..16){
+	foreach(i;4..8){
 		jobManager=mallocator.make!JobManager;
 		scope(exit)mallocator.dispose(jobManager);
 		write(i+1," ");
