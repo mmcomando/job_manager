@@ -80,7 +80,32 @@ void testMultithreaded(void delegate() func,uint threadsCount=0){
 
 	
 }
-
+class MyMallcoator{
+	shared Mallocator allocator;
+	this(){
+		allocator=Mallocator.instance;
+	}
+	auto make(T,Args...)(auto ref Args args){
+		return allocator.make!T(args);
+	}
+	void dispose(T)(ref T* obj){
+		allocator.dispose(obj);
+		//obj=T.init;
+	}
+}
+class MyGcAllcoator{
+	auto make(T,Args...)(auto ref Args args){
+		auto var=new T(args);
+		import core.memory;
+		GC.addRoot(var);
+		return var;
+	}
+	void dispose(T)(ref T* obj){
+		import core.memory;
+		GC.removeRoot(obj);
+		//obj=T.init;
+	}
+}
 
 import core.atomic;
 import  std.random:uniform;
@@ -151,7 +176,11 @@ class BucketAllocator(uint bucketSize){
 		}
 		bucketArrays~=arr;
 	}
-
+	T* make(T,Args...)(auto ref Args args){
+		void[] memory=allocate();
+		//TODO some checks: aligment, size, itp??
+		return memory.emplace!(T)( args );
+	}
 	void[] allocate(){
 	FF:foreach(i,bucketsArray;bucketArrays){
 			if(bucketsArray.empty is null)continue;
@@ -180,6 +209,9 @@ class BucketAllocator(uint bucketSize){
 			return 	cast(void[])empty.data;		
 		}
 
+	}
+	void dispose(T)(T* obj){
+		deallocate(cast(void[])obj[0..1]);
 	}
 	void deallocate(void[] data){
 		foreach(bucketsArray;bucketArrays){
@@ -242,15 +274,15 @@ void testAL(){
 	shared ulong sum;
 	void test(){
 		foreach(k;0..1000){
-			void[][] memories;
+			int*[] memories;
 			uint rand=uniform(130,140);
-			memories=mallocator.makeArray!(void[])(rand);
+			memories=mallocator.makeArray!(int*)(rand);
 			scope(exit)mallocator.dispose(memories);
 			foreach(i;0..rand){
-				memories[i]=allocator.allocate();
+				memories[i]=allocator.make!int();
 			}
 			foreach(m;memories){
-				allocator.deallocate(m);
+				allocator.dispose(m);
 			}
 			atomicOp!"+="(sum,memories.length);
 		}

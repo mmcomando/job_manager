@@ -36,30 +36,24 @@ private:
 	// shared among producers
 	align (64) shared LockType producerLock;//atomic
 
-	enum useAllocator=true;
-	static if(useAllocator){
-		alias Allocator=BucketAllocator!(Node.sizeof);
-		Allocator allocator;
-	}
+	
+	alias Allocator=BucketAllocator!(Node.sizeof);
+	//alias Allocator=MyMallcoator;
+	//alias Allocator=MyGcAllcoator;
+	Allocator allocator;
+
 public:
 	this() {
-		static if(useAllocator){
-			allocator=mallocator.make!Allocator();
-			void[] memory=allocator.allocate();
-			first = last =  memory.emplace!(Node)( T.init );
-		}else{
-			first = last = new Node( T.init );
-		}
+		allocator=mallocator.make!Allocator();
+		first = last =  allocator.make!(Node)( T.init );
+		
 		producerLock = consumerLock = false;
 	}
 	~this(){
-		static if(useAllocator){
-			mallocator.dispose(allocator);
-		}
+		mallocator.dispose(allocator);
 	}
 
-@nogc:
-
+	
 	bool empty(){
 		return (first.next == null); 
 	}
@@ -67,12 +61,7 @@ public:
 
 	
 	void add( T  t ) {
-		static if(useAllocator){
-			void[] memory=allocator.allocate();
-			Node* tmp = memory.emplace!(Node)( t );
-		}else{
-			Node* tmp = new Node(t);
-		}
+		Node* tmp = allocator.make!(Node)( t );
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
 		last.next = tmp;		 		// publish to consumers
 		last = tmp;		 		// swing last forward
@@ -84,29 +73,13 @@ public:
 
 		Node* firstInChain;
 		Node* lastInChain;
-		static if(useAllocator){
-			void[] memory=allocator.allocate();
-			Node* tmp = memory.emplace!(Node)( t[0] );
-			firstInChain=tmp;
+		Node* tmp = allocator.make!(Node)( t[0] );
+		firstInChain=tmp;
+		lastInChain=tmp;
+		foreach(n;1..t.length){
+			tmp = allocator.make!(Node)( t[n] );
+			lastInChain.next=tmp;
 			lastInChain=tmp;
-			foreach(n;1..t.length){
-				memory=allocator.allocate();
-				tmp = memory.emplace!(Node)( t[n] );
-				lastInChain.next=tmp;
-				lastInChain=tmp;
-			}
-		}else{
-			Node*[] tmp;
-			tmp.length=t.length;
-			foreach(i,ref n;tmp)n= new Node(t[i]);
-			Node* next;
-			foreach_reverse(n;tmp){
-				n.next=next;
-				next=n;
-			}
-			firstInChain=tmp[0];
-			lastInChain=tmp[$-1];
-			
 		}
 		while( !cas(&producerLock,cast(LockType)false,cast(LockType)true )){ } 	// acquire exclusivity
 		last.next = firstInChain;		 		// publish to consumers
@@ -131,9 +104,7 @@ public:
 			atomicStore(consumerLock,cast(LockType)false);	       	// release exclusivity		
 			atomicOp!"+="(elementsPopped,1);
 
-			static if(useAllocator){
-				allocator.deallocate(cast(void[])theFirst[0..1]);
-			}
+			allocator.dispose(theFirst);
 			return result;	 		// and report success
 		}
 
@@ -280,8 +251,8 @@ public:
 		//memcpy(cast(void*)memory.ptr,cast(void*)oldArray.ptr,oldSize);
 		//array=memory;
 		T* memory=cast(T*)malloc(newSize);
-				memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
-				array=memory[0..newNumOfElements];
+		memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
+		array=memory[0..newNumOfElements];
 		return cast(void[])oldArray;
 		
 	}
