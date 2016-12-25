@@ -19,11 +19,13 @@ import multithreaded_utils;
 import universal_delegate;
 
 
-alias JobVector=LowLockQueue!(JobDelegate*,bool);
+//alias JobVector=LowLockQueue!(JobDelegate*,bool);
 //alias JobVector=LockedVector!(JobDelegate*);
+alias JobVector=LockedVectorBuildIn!(JobDelegate*);
 
-alias FiberVector=LowLockQueue!(FiberData,bool);
+//alias FiberVector=LowLockQueue!(FiberData,bool);
 //alias FiberVector=LockedVector!(FiberData);
+alias FiberVector=LockedVectorBuildIn!(FiberData);
 
 
 uint jobManagerThreadNum;//thread local var
@@ -54,7 +56,6 @@ class JobManager{
 		
 	}
 	DebugHelper debugHelper;
-	CacheVector fibersCache;
 	
 	//jobs managment
 	private JobVector waitingJobs;
@@ -77,7 +78,7 @@ class JobManager{
 			threadPool[i]=th;
 		}
 		waitingJobs=mallocator.make!JobVector();
-		fibersCache=mallocator.make!CacheVector(128);
+		fibersCache=mallocator.make!CacheVector();
 	}
 	void start(){
 		foreach(thread;threadPool){
@@ -110,7 +111,7 @@ class JobManager{
 		waitForEnd(endLoop);
 		end();
 	}
-	//rather bad function because, there may be fibers in some external manager
+
 	void waitForEnd(ref shared bool end){
 		bool wait=true;
 		do{
@@ -147,39 +148,21 @@ class JobManager{
 		debugHelper.jobsAddedAdd(cast(int)dels.length);
 		waitingJobs.add(dels);
 	}
-	import core.memory;
+
+	alias CacheVector=FiberNoCache;
+	CacheVector fibersCache;
 	uint fibersMade;
-	static Fiber lastFreeFiber;//1 element tls cache
-	enum bool useCache=true;//may be bugged and for simple scenario simple 1 element backup is even faster. I think in real scenario cache should be faster
+
 	Fiber allocateFiber(JobDelegate del){
 		Fiber fiber;
-		static if(useCache){
-			fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
-			assert(fiber.state==Fiber.State.TERM);
-			fiber.reset(del);
-		}else{
-			if(lastFreeFiber is null){
-				fiber= mallocator.make!Fiber( del);
-				fibersMade++;
-				GC.addRoot(cast(void*)fiber);
-			}else{
-				fiber=lastFreeFiber;
-				lastFreeFiber=null;
-				fiber.reset(del);
-			}
-		}
+		fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
+		assert(fiber.state==Fiber.State.TERM);
+		fiber.reset(del);
+		fibersMade++;
 		return fiber;
 	}
 	void deallocateFiber(Fiber fiber){
-		static if(useCache){
-			fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
-		}else{
-			if(lastFreeFiber !is null){
-				GC.removeRoot(cast(void*)lastFreeFiber);
-				mallocator.dispose(lastFreeFiber);
-			}
-			lastFreeFiber=fiber;
-		}
+		fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
 	}
 
 	void runNextJob(){
@@ -240,10 +223,7 @@ struct Counter{
 		if(waitingFiber.fiber is null){
 			return;
 		}
-		if(count>9000){
-			writeln("AAAAAAAAAAAAAAAAA");
-			assert(0);
-		}
+		assert(count<9000);
 		atomicOp!"-="(count, 1);
 		bool ok=cas(&count,0,10000);
 		if(ok){
@@ -526,26 +506,25 @@ void testPerformanceMatrix(){
 }
 void test(uint threadsNum=16){
 
-
+	
 	void startTest(){
 		alias UnDel=void delegate();
 		foreach(i;0..1)
-		callAndWait!(UnDel)((&testPerformance).toDelegate);
+			callAndWait!(UnDel)((&testPerformance).toDelegate);
 		foreach(i;0..1)
-		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
+			callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
 		makeTestJobsFrom(&testFiberLockingToThread,100);
 
-foreach(i;0..10000){
-		int[] pp=	new int[1000];
-		jobManager.debugHelper.resetCounters();
-		int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
-		assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
-		assert(jobManager.debugHelper.jobsDone==jobsRun+1);
-		writeln(atomicLoad(jobManager.debugHelper.fibersAdded)," | ",jobsRun+2);
+		foreach(i;0..10000){
+			int[] pp=	new int[1000];
+			jobManager.debugHelper.resetCounters();
+			int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
+			assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
+			assert(jobManager.debugHelper.jobsDone==jobsRun+1);
+			writeln(atomicLoad(jobManager.debugHelper.fibersAdded)," | ",jobsRun+2);
 			writeln(atomicLoad(jobManager.debugHelper.fibersDone)," | ",jobsRun+2);
-			writeln(jobManager.fibersCache.dataArray.length);
-		assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
-		assert(jobManager.debugHelper.fibersDone==jobsRun+2);
+			assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
+			assert(jobManager.debugHelper.fibersDone==jobsRun+2);
 		}
 	}
 	//writeln("Start JobManager test");

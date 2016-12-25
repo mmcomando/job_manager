@@ -10,7 +10,7 @@ import multithreaded_utils;
 
 
 ///returns data if it is marked as unused, if there is no space realocates
-class CacheVector{
+class FiberVector{
 	alias T=Fiber;
 	static  struct DataStruct{ 
 		bool used;
@@ -22,7 +22,7 @@ class CacheVector{
 	shared uint dataGot;
 	shared uint dataRemoved;
 
-	this(uint length){
+	this(uint length=128){
 		assert(length>0);
 		dataArray=extendArray(length,dataArray);
 	}
@@ -155,6 +155,50 @@ class CacheVector{
 	}
 }
 
+class FiberNoCache{
+	static void dummy(){}
+
+	Fiber getData(uint,uint){
+		Fiber  fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		GC.addRoot(cast(void*)fiber);			
+		fiber.call();
+		
+		return fiber;
+	}
+	void removeData(Fiber obj,uint,uint){
+		GC.removeRoot(cast(void*)obj);
+		mallocator.dispose(obj);
+	}
+
+}
+class FiberOneCache{
+	static void dummy(){}
+	
+	static Fiber lastFreeFiber;//1 element tls cache
+	
+	Fiber getData(uint,uint){
+		Fiber fiber;
+		if(lastFreeFiber is null){
+			fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+			GC.addRoot(cast(void*)fiber);			
+			fiber.call();
+		}else{
+			fiber=lastFreeFiber;
+			lastFreeFiber=null;
+		}
+		return fiber;
+	}
+	void removeData(Fiber obj,uint,uint){
+		if(lastFreeFiber !is null){
+			GC.removeRoot(cast(void*)lastFreeFiber);
+			mallocator.dispose(lastFreeFiber);
+		}
+		lastFreeFiber=obj;
+		
+	}
+
+}
+
 
 
 
@@ -167,7 +211,7 @@ import std.conv:to;
 
 //test extend
 unittest{
-	CacheVector vec=new CacheVector(1);assert(vec.dataArray.length==1);
+	FiberVector vec=new FiberVector(1);assert(vec.dataArray.length==1);
 	vec.dataArray=vec.extendArray(2,vec.dataArray);assert(vec.dataArray.length==2);
 	vec.dataArray=vec.extendArray(3,vec.dataArray);assert(vec.dataArray.length==3);
 	vec.dataArray=vec.extendArray(4,vec.dataArray);assert(vec.dataArray.length==4);
@@ -181,7 +225,7 @@ unittest{
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
 	}
-	CacheVector vec=new CacheVector(10);
+	FiberVector vec=new FiberVector(10);
 	T var;
 	foreach(i;0..10){
 		var=vec.getData();assert(vec.dataArray.length==10);
@@ -196,7 +240,7 @@ void testCV(){
 		registerMemoryErrorHandler();
 	}
 	shared uint sum;
-	CacheVector vec=mallocator.make!CacheVector(1);
+	FiberVector vec=mallocator.make!FiberVector(1);
 	scope(exit)mallocator.dispose(vec);
 	immutable uint firstLoop=10000;
 	immutable uint secondLoop=8;
@@ -258,7 +302,7 @@ void testCV(){
 			foreach(j;0..rand){
 				arr.ptr[j]=vec.getData(threadNum,16);
 			}
-		
+			
 			randomShuffle(arr[0..rand]);
 			foreach(j;0..rand){
 				vec.removeData(arr.ptr[j],threadNum,16);

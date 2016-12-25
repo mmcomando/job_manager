@@ -45,8 +45,7 @@ private:
 public:
 	this() {
 		allocator=mallocator.make!Allocator();
-		first = last =  allocator.make!(Node)( T.init );
-		
+		first = last =  allocator.make!(Node)( T.init );		
 		producerLock = consumerLock = false;
 	}
 	~this(){
@@ -150,8 +149,6 @@ import std.algorithm:remove;
 class LockedVectorBuildIn(T){
 	T[] array;
 public:
-	this(){
-	}
 	bool empty(){
 		return(array.length==0);
 	}	
