@@ -176,7 +176,6 @@ public:
 }
 
 class LockedVector(T){
-@nogc:
 	Vector!T array;
 public:
 	this(){

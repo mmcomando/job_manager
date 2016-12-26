@@ -12,10 +12,11 @@ import job_vector;
 import std.experimental.allocator.building_blocks;
 import core.bitop;
 
-shared Mallocator mallocator;
 
 public import std.experimental.allocator:make,makeArray,dispose;
 
+shared Mallocator mallocator;
+//shared GCAllocator mallocator;
 shared static this(){
 	mallocator=Mallocator.instance;
 }
@@ -116,7 +117,6 @@ import  std.random:uniform;
 
 
 class BucketAllocator(uint bucketSize){
-@nogc:
 	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
 

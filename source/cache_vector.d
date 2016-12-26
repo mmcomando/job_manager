@@ -7,10 +7,11 @@ import core.thread:Fiber,Thread;
 import core.memory;
 
 import multithreaded_utils;
+import job_vector;
 
 
 ///returns data if it is marked as unused, if there is no space realocates
-class FiberVector{
+class FiberVectorCache{
 	alias T=Fiber;
 	static  struct DataStruct{ 
 		bool used;
@@ -42,7 +43,9 @@ class FiberVector{
 	}
 	T initVar(){
 		static void dummy(){}
-		auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		//auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		Fiber fiber = new Fiber(&dummy);
+
 		GC.addRoot(cast(void*)fiber);
 
 		fiber.call();
@@ -159,7 +162,8 @@ class FiberNoCache{
 	static void dummy(){}
 
 	Fiber getData(uint,uint){
-		Fiber  fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		//Fiber  fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+		Fiber fiber = new Fiber(&dummy);
 		GC.addRoot(cast(void*)fiber);			
 		fiber.call();
 		
@@ -167,7 +171,7 @@ class FiberNoCache{
 	}
 	void removeData(Fiber obj,uint,uint){
 		GC.removeRoot(cast(void*)obj);
-		mallocator.dispose(obj);
+		//mallocator.dispose(obj);
 	}
 
 }
@@ -179,7 +183,8 @@ class FiberOneCache{
 	Fiber getData(uint,uint){
 		Fiber fiber;
 		if(lastFreeFiber is null){
-			fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+			//fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
+			fiber = new Fiber(&dummy);
 			GC.addRoot(cast(void*)fiber);			
 			fiber.call();
 		}else{
@@ -196,7 +201,45 @@ class FiberOneCache{
 		lastFreeFiber=obj;
 		
 	}
+}
 
+static Vector!Fiber array;
+static uint used=0;
+static this(){
+	array=new Vector!Fiber;
+	array.reserve(16);
+}
+class FiberTLSCache{
+	static void dummy(){}
+
+	this(){}
+	
+	Fiber getData(uint,uint){
+		Fiber fiber;
+		if(array.length<=used){
+			fiber=new Fiber(&dummy);
+			array~=fiber;
+			GC.addRoot(cast(void*)fiber);	
+			fiber.call();
+			used++;
+			return fiber;
+		}
+		fiber=array[used];
+		used++;
+		return fiber;
+	}
+	void removeData(Fiber obj,uint,uint){
+		foreach(i,fiber;array){
+			if(obj == fiber){
+				array[i]=array[used-1];
+				array[used-1]=obj;
+				//array.remove(i);
+				used--;
+				return;
+			}
+		}
+		assert(0);
+	}
 }
 
 
@@ -240,7 +283,7 @@ void testCV(){
 		registerMemoryErrorHandler();
 	}
 	shared uint sum;
-	FiberVector vec=mallocator.make!FiberVector(1);
+	FiberVectorCache vec=mallocator.make!FiberVectorCache(1);
 	scope(exit)mallocator.dispose(vec);
 	immutable uint firstLoop=10000;
 	immutable uint secondLoop=8;
