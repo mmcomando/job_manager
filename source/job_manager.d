@@ -94,27 +94,32 @@ class JobManager{
 		startMainLoop(mainLoop.toDelegate,threadsCount);
 	}
 	void startMainLoop(JobDelegate mainLoop,uint threadsCount=0){
-		shared bool endLoop=false;
-		static struct NoGcDelegateHelper
-		{
-			this(JobDelegate del,ref shared bool end){
-				this.del=del;
-				endPointer=&end;
+		version(no_th){
+			mainLoop();
+		}else{
+			shared bool endLoop=false;
+			static struct NoGcDelegateHelper
+			{
+				this(JobDelegate del,ref shared bool end){
+					this.del=del;
+					endPointer=&end;
+				}
+				JobDelegate del;
+				shared bool* endPointer;
+				void call() { 
+					del();
+					atomicStore(*endPointer,true);			
+				}
 			}
-			JobDelegate del;
-			shared bool* endPointer;
-			void call() { 
-				del();
-				atomicStore(*endPointer,true);			
-			}
+			NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
+			initialize(threadsCount);
+			auto del=&helper.call;
+			start();
+			addJob(&del);
+			waitForEnd(endLoop);
+			end();
 		}
-		NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
-		initialize(threadsCount);
-		auto del=&helper.call;
-		start();
-		addJob(&del);
-		waitForEnd(endLoop);
-		end();
+	
 	}
 
 	void waitForEnd(ref shared bool end){
@@ -279,9 +284,9 @@ auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 }
 
 auto multithreated(T)(T[] slice){
-	import std.traits:ParameterTypeTuple;
 
 	static struct Tmp {
+		import std.traits:ParameterTypeTuple;
 		T[] array;
 		int opApply(Dg)(scope Dg dg)
 		{ 
@@ -341,9 +346,13 @@ auto multithreated(T)(T[] slice){
 			
 		}
 	}
-	Tmp tmp;
-	tmp.array=slice;
-	return tmp;
+	version(no_th){
+		return slice;
+	}else{
+		Tmp tmp;
+		tmp.array=slice;
+		return tmp;
+	}
 }
 
 
@@ -628,8 +637,15 @@ void testForeach(){
 	}
 	foreach(int i ,ref int el;ints.multithreated){
 		writeln(i);
-		activeSleep(1000);
+		activeSleep(100);
 	}
+	writeln(sum);
+}
+void testNoMultithreated(){
+	version(no_th){
+		jobManager.startMainLoop(&testForeach,999999);
+	}
+
 }
 void test(uint threadsNum=16){
 

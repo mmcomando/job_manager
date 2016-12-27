@@ -9,4 +9,14 @@
 	"dflags-dmd": ["-vgc"],
 	"dependencies" : {
 	},
+	"configurations": [
+		{
+			"name": "normal",
+			"targetType": "executable"
+		},{
+			"name": "no_th",
+			"targetType": "executable",
+			"versions": ["no_th"]
+		}
+	]
 }
