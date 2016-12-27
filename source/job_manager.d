@@ -62,19 +62,17 @@ class JobManager{
 		
 	}
 	DebugHelper debugHelper;
-	
+
 	//jobs managment
 	private JobVector waitingJobs;
 	//fibers managment
 	private FiberVector[] waitingFibers;
 	//thread managment
 	private Thread[] threadPool;
-	private bool[] threadWorking;
 	bool exit;
 
-	void init(uint threadsCount=0){
+	void initialize(uint threadsCount=0){
 		if(threadsCount==0)threadsCount=threadsPerCPU;
-		threadWorking=mallocator.makeArray!(bool)(threadsCount);
 		waitingFibers=mallocator.makeArray!(FiberVector)(threadsCount);
 		foreach(ref f;waitingFibers)f=mallocator.make!FiberVector;
 		threadPool=mallocator.makeArray!(Thread)(threadsCount);
@@ -83,6 +81,7 @@ class JobManager{
 			th.name=i.to!string;
 			threadPool[i]=th;
 		}
+
 		waitingJobs=mallocator.make!JobVector();
 		fibersCache=mallocator.make!CacheVector();
 	}
@@ -110,7 +109,7 @@ class JobManager{
 			}
 		}
 		NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
-		init(threadsCount);
+		initialize(threadsCount);
 		auto del=&helper.call;
 		addJob(&del);
 		start();
@@ -138,13 +137,11 @@ class JobManager{
 	}
 
 	
-	
 	void addFiber(FiberData fiberData){
 		assert(waitingFibers.length==threadPool.length);
 		assert(fiberData.fiber.state!=Fiber.State.TERM);
 		debugHelper.fibersAddedAdd();
 		waitingFibers[fiberData.threadNum].add(fiberData);
-
 	}
 	void addJob(JobDelegate* del){
 		debugHelper.jobsAddedAdd();
@@ -159,17 +156,18 @@ class JobManager{
 
 	Fiber allocateFiber(JobDelegate del){
 		Fiber fiber;
-		fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadWorking.length);
+		fiber=fibersCache.getData(jobManagerThreadNum,cast(uint)threadPool.length);
 		assert(fiber.state==Fiber.State.TERM);
 		fiber.reset(del);
 		fibersMade++;
 		return fiber;
 	}
 	void deallocateFiber(Fiber fiber){
-		fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadWorking.length);
+		fibersCache.removeData(fiber,jobManagerThreadNum,cast(uint)threadPool.length);
 	}
-
 	void runNextJob(){
+		static int dummySink;
+		static int nothingToDoNum;
 		
 		Fiber fiber;
 		FiberData fd=waitingFibers[jobManagerThreadNum].pop;
@@ -186,11 +184,16 @@ class JobManager{
 		}
 		//nothing to do
 		if(fiber is null ){
-			threadWorking[jobManagerThreadNum]=false;
+			nothingToDoNum++;
+			if(nothingToDoNum>50){
+				Thread.sleep(10.usecs);
+			}else{
+				foreach(i;0..uniform(0,20))dummySink+=uniform(1,2);//backoff
+			}
 			return;
 		}
 		//do the job
-		threadWorking[jobManagerThreadNum]=true;
+		nothingToDoNum=0;
 		assert(fiber.state==Fiber.State.HOLD);
 		fiber.call();
 
@@ -201,7 +204,6 @@ class JobManager{
 	}
 	void threadRunFunction(){
 		jobManagerThreadNum=Thread.getThis.name.to!uint;
-		threadWorking[jobManagerThreadNum]=true;
 		while(!exit){
 			runNextJob();
 		}
@@ -224,15 +226,15 @@ struct Counter{
 		this.count=count;
 	}
 	void decrement(){
-		if(waitingFiber.fiber is null){
-			return;
-		}
-		assert(count<9000);
+		assert(atomicLoad(count)<9000);
+		assert(waitingFiber.fiber !is null);
+
 		atomicOp!"-="(count, 1);
 		bool ok=cas(&count,0,10000);
 		if(ok){
 			jobManager.addFiber(waitingFiber);
-			waitingFiber.fiber=null;
+			//waitingFiber.fiber=null;//makes deadlock maybe atomicStore would help or it shows some bug??
+			//atomicStore(waitingFiber.fiber,null);//has to be shared ignore for now
 		}
 
 		
@@ -294,8 +296,9 @@ struct UniversalJobGroup(Delegate){
 		jobsAdded++;
 	}
 	//returns range so you can allocate it as you want
-	//but remember that data is stack allocated
+	//but remember: that data is stack allocated
 	auto wait(){
+		assert(jobsAdded==jobsNum);
 		counter.count=jobsNum;
 		counter.waitingFiber=getFiberData();
 		foreach(ref unDel;unJobs){
@@ -461,6 +464,43 @@ void testPerformance(){
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms], %s[it/ms]",iterations,packetSize,sw.peek().msecs,iterations*packetSize/sw.peek().msecs);
 }
+
+void activeSleep(uint u_seconds){
+	StopWatch sw;
+	sw.start();
+	while(sw.peek().usecs<u_seconds){}//for 10us will iterate ~=120 tiems
+	sw.stop();
+	
+}
+void testPerformanceSleep(){	
+	import std.parallelism;
+	uint partsNum=1000;
+	uint iterations=60;
+	uint u_secs=13;
+
+	
+	alias ddd=typeof(&activeSleep);
+	UniversalJobGroup!ddd group=UniversalJobGroup!ddd(partsNum);
+	mixin(getStackMemory("group"));
+	foreach(int i;0..partsNum){
+		group.add(&activeSleep,u_secs);
+	}
+	StopWatch sw;
+	sw.start();
+	foreach(i;0..iterations){
+		group.wait();
+	}
+	
+	
+	sw.stop();  
+	result=cast(float)iterations*u_secs/sw.peek().usecs;
+
+	writefln( "BenchmarkSleep: %s*%s : %s[us], %s[it/us]  %s",iterations,u_secs,sw.peek().usecs,cast(float)iterations*u_secs/sw.peek().usecs,result/base);
+}
+
+
+
+
 import core.simd;
 alias mat4=float[16];
 //import gl3n.linalg;
@@ -472,6 +512,7 @@ void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){
 		}
 	}
 }
+
 __gshared float result;
 __gshared float base=1;
 void testPerformanceMatrix(){	
@@ -513,30 +554,28 @@ void test(uint threadsNum=16){
 	
 	static void startTest(){
 		alias UnDel=void delegate();
-		foreach(i;0..100)
+		makeTestJobsFrom(&testFiberLockingToThread,100);
+		foreach(i;0..40)
 			callAndWait!(UnDel)((&testPerformance).toDelegate);
 		foreach(i;0..1000)
-			callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
-		makeTestJobsFrom(&testFiberLockingToThread,100);
-
-		foreach(i;0..10000){
+		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
+		callAndWait!(UnDel)((&testPerformanceSleep).toDelegate);
+		//Thread.sleep(2.seconds);
+		//foreach(i;0..10000)
+		{
 			int[] pp=	new int[1000];
 			jobManager.debugHelper.resetCounters();
 			int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 			assert(jobManager.debugHelper.jobsAdded==jobsRun+1);
 			assert(jobManager.debugHelper.jobsDone==jobsRun+1);
-			writeln(atomicLoad(jobManager.debugHelper.fibersAdded)," | ",jobsRun+2);
-			writeln(atomicLoad(jobManager.debugHelper.fibersDone)," | ",jobsRun+2);
 			assert(atomicLoad(jobManager.debugHelper.fibersAdded)==jobsRun+2);
 			assert(atomicLoad(jobManager.debugHelper.fibersDone)==jobsRun+2);
 		}
 	}
-	//writeln("Start JobManager test");
 	jobManager.startMainLoop(&startTest,threadsNum);
-	//writeln("End JobManager test");
 }
 void testScalability(){
-	foreach(i;3..5){
+	foreach(i;3..4){
 		jobManager=mallocator.make!JobManager;
 		scope(exit)mallocator.dispose(jobManager);
 		write(i+1," ");
