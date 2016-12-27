@@ -111,8 +111,8 @@ class JobManager{
 		NoGcDelegateHelper helper=NoGcDelegateHelper(mainLoop,endLoop);
 		initialize(threadsCount);
 		auto del=&helper.call;
-		addJob(&del);
 		start();
+		addJob(&del);
 		waitForEnd(endLoop);
 		end();
 	}
@@ -204,6 +204,7 @@ class JobManager{
 	}
 	void threadRunFunction(){
 		jobManagerThreadNum=Thread.getThis.name.to!uint;
+		
 		while(!exit){
 			runNextJob();
 		}
@@ -275,6 +276,74 @@ auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	static if(unJob.unDel.hasReturn){
 		return unJob.unDel.result;
 	}
+}
+
+auto multithreated(T)(T[] slice){
+	import std.traits:ParameterTypeTuple;
+
+	static struct Tmp {
+		T[] array;
+		int opApply(Dg)(scope Dg dg)
+		{ 
+			pragma(msg,Dg);
+			static assert (ParameterTypeTuple!Dg.length == 1 || ParameterTypeTuple!Dg.length == 2);
+			enum hasI=ParameterTypeTuple!Dg.length == 2;
+			static if(hasI)alias IType=ParameterTypeTuple!Dg[0];
+			static struct NoGcDelegateHelper{
+				Dg del;
+				T[] arr;
+				static if(hasI)IType iStart;
+
+				void call() { 
+					foreach(int i,ref element;arr){
+						static if(hasI){
+							IType iSend=iStart+i;
+							int result=del(iSend,element);
+						}else{
+							int result=del(element);
+						}
+						assert(result==0,"Cant use break, continue, itp in multithreated foreach");
+					}	
+				}
+			}
+			enum partsNum=16;//constatnt number == easy usage of stack
+			if(array.length<partsNum){
+				foreach(int i,ref element;array){
+					static if(hasI){
+						int result=dg(i,element);
+					}else{
+						int result=dg(element);
+					}
+					assert(result==0,"Cant use break, continue, itp in multithreated foreach");
+
+				}
+			}else{
+				NoGcDelegateHelper[partsNum] helpers;
+				uint step=cast(uint)array.length/partsNum;
+				
+				alias ddd=void delegate();
+				UniversalJobGroup!ddd group=UniversalJobGroup!ddd(partsNum);
+				mixin(getStackMemory("group"));
+				foreach(int i;0..partsNum-1){
+					helpers[i].del=dg;
+					helpers[i].arr=array[i*step..(i+1)*step];
+					static if(hasI)helpers[i].iStart=i*step;
+					group.add(&helpers[i].call);
+				}
+				helpers[partsNum-1].del=dg;
+				helpers[partsNum-1].arr=array[(partsNum-1)*step..array.length];
+				static if(hasI)helpers[partsNum-1].iStart=(partsNum-1)*step;
+				group.add(&helpers[partsNum-1].call);
+
+				group.wait();
+			}
+			return 0;
+			
+		}
+	}
+	Tmp tmp;
+	tmp.array=slice;
+	return tmp;
 }
 
 
@@ -549,16 +618,31 @@ void testPerformanceMatrix(){
 	result=cast(float)iterations*matricesNum/sw.peek().usecs;
 	writefln( "BenchmarkMatrix: %s*%s : %s[us], %s[it/us] %s",iterations,matricesNum,sw.peek().usecs,cast(float)iterations*matricesNum/sw.peek().usecs,result/base);
 }
+void testForeach(){
+	int[] ints;
+	ints.length=200;
+	shared uint sum=0;
+	foreach(ref int el;ints.multithreated){
+		atomicOp!"+="(sum,1);
+		activeSleep(100);//simulate load for 100us
+	}
+	foreach(int i ,ref int el;ints.multithreated){
+		writeln(i);
+		activeSleep(1000);
+	}
+}
 void test(uint threadsNum=16){
 
 	
 	static void startTest(){
+		testForeach();
+
 		alias UnDel=void delegate();
 		makeTestJobsFrom(&testFiberLockingToThread,100);
 		foreach(i;0..40)
 			callAndWait!(UnDel)((&testPerformance).toDelegate);
 		foreach(i;0..1000)
-		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
+			callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
 		callAndWait!(UnDel)((&testPerformanceSleep).toDelegate);
 		//Thread.sleep(2.seconds);
 		//foreach(i;0..10000)
