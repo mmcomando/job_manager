@@ -1,4 +1,4 @@
-﻿module job_manager;
+﻿module job_manager.manager;
 
 import core.atomic;
 import core.cpuid:threadsPerCPU;
@@ -13,10 +13,10 @@ import std.traits:ReturnType,Parameters,TemplateOf;
 
 
 
-import cache_vector;
-import job_vector;
-import multithreaded_utils;
-import universal_delegate;
+import job_manager.cache_vector;
+import job_manager.job_vector;
+import job_manager.multithreaded_utils;
+import job_manager.universal_delegate;
 
 
 alias JobVector=LowLockQueue!(JobDelegate*,bool);
@@ -290,7 +290,6 @@ auto multithreated(T)(T[] slice){
 		T[] array;
 		int opApply(Dg)(scope Dg dg)
 		{ 
-			pragma(msg,Dg);
 			static assert (ParameterTypeTuple!Dg.length == 1 || ParameterTypeTuple!Dg.length == 2);
 			enum hasI=ParameterTypeTuple!Dg.length == 2;
 			static if(hasI)alias IType=ParameterTypeTuple!Dg[0];

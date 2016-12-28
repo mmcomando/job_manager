@@ -1,4 +1,4 @@
-﻿module universal_delegate;
+﻿module job_manager.universal_delegate;
 import std.traits:ReturnType,Parameters,isFunctionPointer,isDelegate,ParameterStorageClassTuple,ParameterStorageClass,AliasSeq;
 
 template getPointer(T){

@@ -1,4 +1,4 @@
-﻿module job_vector;
+﻿module job_manager.job_vector;
 
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
@@ -9,7 +9,7 @@ import std.conv:emplace;
 import core.memory;
 import std.experimental.allocator;
 
-import multithreaded_utils;
+import job_manager.multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
 //By Herb Sutter
 
@@ -113,6 +113,7 @@ public:
 }
 
 import std.functional:toDelegate;
+import std.random:uniform;
 static int[] tmpArr=[1,1,1,1,1,1];
 void testLLQ(){
 	shared uint addedElements;

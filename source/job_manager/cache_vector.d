@@ -1,4 +1,4 @@
-﻿module cache_vector;
+﻿module job_manager.cache_vector;
 
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
@@ -6,8 +6,8 @@ import core.atomic;
 import core.thread:Fiber,Thread;
 import core.memory;
 
-import multithreaded_utils;
-import job_vector;
+import job_manager.multithreaded_utils;
+import job_manager.job_vector;
 
 
 ///returns data if it is marked as unused, if there is no space realocates

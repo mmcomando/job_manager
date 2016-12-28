@@ -1,21 +1,18 @@
-import std.stdio;
-import job_manager;
-import cache_vector;
-import multithreaded_utils;
-import job_vector;
+import std.stdio:writeln;
+
+public import job_manager;
+
+void my_main()
+{
+	int[] ints;
+	ints.length=200;
+	shared uint sum=0;
+	foreach(ref int el;ints.multithreated){
+		import core.atomic;
+		atomicOp!"+="(sum,1);
+	}
+}
 void main()
 {
-	import core.memory;
-	//GC.disable();
-	version(DigitalMars){
-		import etc.linux.memoryerror;
-		registerMemoryErrorHandler();
-	}
-	version(unittest){}else{
-		//foreach(i;0..10000)testLLQ();
-		//testNoMultithreated();
-		foreach(i;0..100)testScalability();
-		//testCV();
-		//testAL();
-	}
+	jobManager.startMainLoop(&my_main);
 }

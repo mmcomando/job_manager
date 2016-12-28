@@ -1,4 +1,4 @@
-﻿module multithreaded_utils;
+﻿module job_manager.multithreaded_utils;
 
 import core.thread;
 import core.cpuid:threadsPerCPU;
@@ -7,8 +7,8 @@ import core.stdc.stdlib:malloc,free;
 import std.stdio:writeln,writefln;
 import std.conv:to,emplace;
 import std.random:uniform;
-import job_manager;
-import job_vector;
+import job_manager.manager;
+import job_manager.job_vector;
 import std.experimental.allocator.building_blocks;
 import core.bitop;
 
