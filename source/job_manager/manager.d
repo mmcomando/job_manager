@@ -18,6 +18,7 @@ import job_manager.job_vector;
 import job_manager.multithreaded_utils;
 import job_manager.universal_delegate;
 
+enum bool useMultithreated=true;
 
 alias JobVector=LowLockQueue!(JobDelegate*,bool);
 //alias JobVector=LockedVector!(JobDelegate*);
@@ -94,7 +95,7 @@ class JobManager{
 		startMainLoop(mainLoop.toDelegate,threadsCount);
 	}
 	void startMainLoop(JobDelegate mainLoop,uint threadsCount=0){
-		version(no_th){
+		static if(!useMultithreated){
 			mainLoop();
 		}else{
 			shared bool endLoop=false;
@@ -345,7 +346,7 @@ auto multithreated(T)(T[] slice){
 			
 		}
 	}
-	version(no_th){
+	static if(!useMultithreated){
 		return slice;
 	}else{
 		Tmp tmp;
@@ -641,7 +642,7 @@ void testForeach(){
 	writeln(sum);
 }
 void testNoMultithreated(){
-	version(no_th){
+	static if(!useMultithreated){
 		jobManager.startMainLoop(&testForeach,999999);
 	}
 

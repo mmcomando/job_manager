@@ -5,6 +5,6 @@ public import job_manager.manager;
 
 
 
-void test(){
+void testMultithreated(){
 	testScalability();
 }

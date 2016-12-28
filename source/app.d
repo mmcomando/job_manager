@@ -1,6 +1,6 @@
 import std.stdio:writeln;
 
-public import job_manager;
+import job_manager;
 
 void my_main()
 {
@@ -14,5 +14,6 @@ void my_main()
 }
 void main()
 {
+	//testMultithreated();
 	jobManager.startMainLoop(&my_main);
 }
