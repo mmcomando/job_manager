@@ -13,6 +13,7 @@ import job_manager.job_vector;
 Fiber newFiber(){
 	static void dummy(){}
 	Fiber fiber = new Fiber(&dummy);
+	GC.addRoot(cast(void*)fiber);	
 	fiber.call();
 	return fiber;
 }
@@ -49,11 +50,7 @@ class FiberVectorCache{
 		}
 	}
 	T initVar(){
-		static void dummy(){}
-		//auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
 		Fiber fiber = newFiber();
-		GC.addRoot(cast(void*)fiber);
-		assert(fiber.state==Fiber.State.TERM);
 		return fiber;
 	}
 	shared(DataStruct[])  extendArray(uint length,shared DataStruct[] oldDataArray){
@@ -164,9 +161,7 @@ class FiberVectorCache{
 
 class FiberNoCache{
 	Fiber getData(uint,uint){
-		Fiber fiber = newFiber();
-		GC.addRoot(cast(void*)fiber);		
-		
+		Fiber fiber = newFiber();		
 		return fiber;
 	}
 	void removeData(Fiber obj,uint,uint){
@@ -183,7 +178,6 @@ class FiberOneCache{
 		Fiber fiber;
 		if(lastFreeFiber is null){
 			fiber = newFiber();
-			GC.addRoot(cast(void*)fiber);
 		}else{
 			fiber=lastFreeFiber;
 			lastFreeFiber=null;
@@ -216,7 +210,6 @@ class FiberTLSCache{
 		if(array.length<=used){
 			fiber= newFiber();
 			array~=fiber;
-			GC.addRoot(cast(void*)fiber);	
 			used++;
 			return fiber;
 		}

@@ -14,6 +14,7 @@ import std.traits:Parameters;
 import job_manager.fiber_cache;
 import job_manager.job_vector;
 import job_manager.shared_utils;
+import job_manager.utils;
 import job_manager.universal_delegate;
 import job_manager.debug_data;
 
@@ -514,15 +515,19 @@ int randomRecursionJobs(int deepLevel){
 	return sum(jobsRun)+randNum;
 }
 /// One Job and one Fiber.yield
+shared int myCounter;
 void simpleYield(){
 	auto fiberData=getFiberData();
 	foreach(i;0..1){
+		SharedSink.add(atomicOp!"+="(myCounter,1));
 		jobManager.addFiber(fiberData);
 		Fiber.yield();
 	}
 }
 
-void testPerformance(){		
+void testPerformance(){	
+	myCounter=0;
+	SharedSink.reset();	
 	uint iterations=1000;
 	uint packetSize=100;
 	StopWatch sw;
@@ -534,13 +539,17 @@ void testPerformance(){
 	foreach(int i;0..packetSize){
 		group.add(&simpleYield);
 	}
+	int[] pp=	new int[100];
 	foreach(i;0..iterations){
 		group.wait();
 	}
-	assert(jobManager.debugHelper.jobsAdded==iterations*packetSize);
-	assert(jobManager.debugHelper.jobsDone ==iterations*packetSize);
-	assert(jobManager.debugHelper.fibersAdded==iterations*packetSize+iterations);
-	assert(jobManager.debugHelper.fibersDone ==iterations*packetSize+iterations);
+
+	SharedSink.verifyUnique(iterations*packetSize);
+
+	assertM(jobManager.debugHelper.jobsAdded,iterations*packetSize);
+	assertM(jobManager.debugHelper.jobsDone ,iterations*packetSize);
+	assertM(jobManager.debugHelper.fibersAdded,iterations*packetSize+iterations);
+	assertM(jobManager.debugHelper.fibersDone ,iterations*packetSize+iterations);
 	sw.stop();  
 	writefln( "Benchmark: %s*%s : %s[ms], %s[it/ms]",iterations,packetSize,sw.peek().msecs,iterations*packetSize/sw.peek().msecs);
 }
@@ -548,7 +557,7 @@ void testPerformance(){
 void activeSleep(uint u_seconds){
 	StopWatch sw;
 	sw.start();
-	while(sw.peek().usecs<u_seconds){}//for 10us will iterate ~=120 tiems
+	while(sw.peek().usecs<u_seconds){}//for 10us will iterate ~120 tiems
 	sw.stop();
 	
 }
@@ -651,6 +660,7 @@ void test(uint threadsNum=16){
 
 	
 	static void startTest(){
+
 		testForeach();
 
 		alias UnDel=void delegate();
@@ -663,7 +673,7 @@ void test(uint threadsNum=16){
 		//Thread.sleep(2.seconds);
 		//foreach(i;0..10000)
 		{
-			//int[] pp=	new int[1000];
+			int[] pp=	new int[1000];
 			jobManager.debugHelper.resetCounters();
 			int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 			assert(jobManager.debugHelper.jobsAdded==jobsRun+1);

@@ -14,6 +14,7 @@ void my_main()
 }
 void main()
 {
+	while(1)
 	testMultithreated();
 	//jobManager.startMainLoop(&my_main);
 }

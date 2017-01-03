@@ -14,6 +14,12 @@ void writelnng(T...)(T args){
 	assumeNoGC( (T arg){writeln(arg);})(args);
 }
 
+void assertM(A,B)(A a,B b){
+	if(a!=b){
+		writefln("A: %s, B: %s",a,b);
+		assert(a==b);
+	}
+}
 
 
 

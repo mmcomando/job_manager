@@ -7,7 +7,6 @@ import core.stdc.stdlib:malloc,free;
 import std.stdio:writeln,writefln;
 import std.random:uniform;
 import std.conv:to;
-import job_manager.job_vector;
 import std.experimental.allocator.building_blocks;
 
 

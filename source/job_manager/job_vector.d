@@ -12,6 +12,7 @@ import std.experimental.allocator.mallocator;
 
 import job_manager.shared_allocator;
 import job_manager.shared_utils;
+import job_manager.utils;
 
 //import job_manager.multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
@@ -223,3 +224,59 @@ public:
 	}
 	
 }
+
+
+class SharedSink{
+	alias T=int;
+
+
+	alias DataVector=Vector!T;
+	static DataVector vector;
+
+	alias DataDataVector=LockedVector!DataVector;
+	__gshared DataDataVector allData;
+
+
+	static this(){
+		vector=Mallocator.instance.make!DataVector;
+		allData.add(vector);
+	}
+	static ~this(){
+		allData.removeElement(vector);
+		Mallocator.instance.dispose(vector);
+	}
+	
+	
+	shared static this(){
+		allData=Mallocator.instance.make!DataDataVector;
+	}
+	shared static ~this(){
+		Mallocator.instance.dispose(allData);
+	}
+
+	static void add(T obj){
+		vector~=obj;
+	}
+	static void reset(){
+		foreach(arr;allData){
+			arr.reset();
+		}
+	}
+	
+	static auto getAll(){
+		return allData;
+	}
+	static verifyUnique(int expectedNum){
+		import std.algorithm;
+		import std.array;
+		auto all=SharedSink.getAll()[];
+		auto oneRange=all.map!((a) => a[]).joiner;
+		int[] allocated=oneRange.array;
+		allocated.sort();
+		assertM(allocated.length,expectedNum);
+		allocated.length -= allocated.uniq().copy(allocated).length;
+		assertM(allocated.length,expectedNum);
+	}
+}
+
+
