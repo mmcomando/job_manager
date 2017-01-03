@@ -58,6 +58,15 @@ struct UniversalDelegate(Delegate)
 			}
 		}
 	}
+	void* getFuncPtr(){
+		static if(is(Delegate == delegate)){
+			return deleg.funcptr;
+
+		}else{
+			return deleg;
+
+		}
+	}
 	ReturnType!Delegate call(){
 		// Load arguments to orginal form
 		Parameters!Delegate argumentsTmp;

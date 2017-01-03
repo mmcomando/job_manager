@@ -1,89 +1,16 @@
-﻿module job_manager.multithreaded_utils;
+﻿module job_manager.shared_allocator;
 
-import core.thread;
-import core.cpuid:threadsPerCPU;
-import core.stdc.string:memset,memcpy;
-import core.stdc.stdlib:malloc,free;
-import std.stdio:writeln,writefln;
-import std.conv:to,emplace;
-import std.random:uniform;
-import job_manager.manager;
+import std.stdio;
+import std.conv:emplace;
+import std.experimental.allocator;
+import std.experimental.allocator.mallocator;
+
+import job_manager.shared_utils;
+import job_manager.utils;
 import job_manager.job_vector;
-import std.experimental.allocator.building_blocks;
-import core.bitop;
+import job_manager.vector;
 
 
-public import std.experimental.allocator:make,makeArray,dispose;
-
-shared Mallocator mallocator;
-//shared GCAllocator mallocator;
-shared static this(){
-	mallocator=Mallocator.instance;
-}
-
-import std.traits;
-
-// Casts @nogc out of a function or delegate type.
-auto assumeNoGC(T) (T t) if (isFunctionPointer!T || isDelegate!T)
-{
-	enum attrs = functionAttributes!T | FunctionAttribute.nogc;
-	return cast(SetFunctionAttributes!(T, functionLinkage!T, attrs)) t;
-}
-
-void writelnng(T...)(T args){
-	assumeNoGC( (T arg){writeln(arg);})(args);
-}
-
-@nogc void freeData(void[] data){
-	//0xFFFFFF propably onvalid value for pointers and other types
-	memset(cast(void*)data.ptr,0xFFFFFFFF,data.length);//very important :) makes bugs show up xD 
-	//mallocator.dispose(data);
-	free(data.ptr);
-}
-
-@nogc @safe nothrow size_t nextPow2(size_t num){
-	return 1<< bsr(num)+1;
-}
-
-void printException(Exception e, int maxStack = 4) {
-	writeln("Exception message: ", e.msg);
-	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line,Thread.getThis.id);
-	writeln("Call stack:");
-	foreach (i, b; e.info) {
-		writeln(b);
-		if (i >= maxStack)
-			break;
-	}
-	writeln("--------------");
-}
-void printStack(){
-	static immutable Exception exc=new Exception("Dummy");
-	try{
-		throw exc;
-	}catch(Exception e ){
-		printException(e);
-	}
-}
-
-
-//useful for testing if function is safe in multthreated enviroment
-//name can be used as id
-void testMultithreaded(void delegate() func,uint threadsCount=0){
-	if(threadsCount==0)
-		threadsCount=threadsPerCPU;
-	Thread[] threadPool=mallocator.makeArray!(Thread)(threadsCount);
-	foreach(i;0..threadsCount){
-		Thread th=mallocator.make!Thread(func);
-		th.name=i.to!string;//maybe there is better way to pass data to a thread?
-		threadPool[i]=th;
-	}
-	foreach(thread;threadPool)thread.start();
-	foreach(thread;threadPool)thread.join();
-	foreach(thread;threadPool)mallocator.dispose(thread);
-	mallocator.dispose(threadPool);
-
-	
-}
 class MyMallcoator{
 	shared Mallocator allocator;
 	this(){
@@ -119,7 +46,7 @@ import  std.random:uniform;
 class BucketAllocator(uint bucketSize){
 	static assert(bucketSize>=8);
 	enum shared Bucket* invalidValue=cast(shared Bucket*)858567;
-
+	
 	static struct Bucket{
 		union{
 			void[bucketSize] data;
@@ -127,7 +54,7 @@ class BucketAllocator(uint bucketSize){
 		}
 	}
 	enum bucketsNum=128;
-
+	
 	
 	static struct BucketsArray{
 	@nogc:
@@ -155,11 +82,11 @@ class BucketAllocator(uint bucketSize){
 		}
 	}
 	alias BucketArraysType=Vector!(shared BucketsArray*);
-
+	
 	//shared BucketsArray*[] bucketArrays;
 	BucketArraysType bucketArrays;
-
-
+	
+	
 	this(){
 		bucketArrays=mallocator.make!(BucketArraysType);
 		bucketArrays.extend(128);
@@ -173,7 +100,7 @@ class BucketAllocator(uint bucketSize){
 		(*arr).initialize();
 		if(!bucketArrays.canAddWithoutRealloc){
 			if(oldData !is null){
-				freeData(oldData);//free on next alloc, noone should use the old array
+				bucketArrays.freeData(oldData);//free on next alloc, noone should use the old array
 			}
 			oldData=bucketArrays.manualExtend();
 		}
@@ -187,7 +114,7 @@ class BucketAllocator(uint bucketSize){
 	void[] allocate(){
 	FF:foreach(i,bucketsArray;bucketArrays){
 			if(bucketsArray.empty is null)continue;
-
+			
 			shared Bucket* emptyBucket;
 			do{
 			BACK:
@@ -202,7 +129,7 @@ class BucketAllocator(uint bucketSize){
 			atomicStore(bucketsArray.empty,emptyBucket.next);
 			return cast(void[])emptyBucket.data;
 		}
-
+		
 		//assert(0);
 		synchronized(this){
 			extend();
@@ -211,7 +138,7 @@ class BucketAllocator(uint bucketSize){
 			bucketsArray.empty=(*bucketsArray.empty).next;
 			return 	cast(void[])empty.data;		
 		}
-
+		
 	}
 	void dispose(T)(T* obj){
 		deallocate(cast(void[])obj[0..1]);
@@ -225,7 +152,7 @@ class BucketAllocator(uint bucketSize){
 			}
 			shared Bucket* bucket=cast(shared Bucket*)data.ptr;
 			shared Bucket* emptyBucket;
-
+			
 			do{
 			BACK:
 				emptyBucket=atomicLoad(bucketsArray.empty);
@@ -239,12 +166,12 @@ class BucketAllocator(uint bucketSize){
 		writelnng(data.ptr);
 		assert(0);
 	}
-
+	
 	uint usedSlots(){
 		uint sum;
 		foreach(bucketsArray;bucketArrays)sum+=bucketsArray.usedSlots;
 		return sum;
-
+		
 	}
 }
 
@@ -268,7 +195,7 @@ void ttt(){
 			allocator.deallocate(m);
 		}
 	}
-
+	
 }
 import std.datetime;
 void testAL(){
@@ -305,7 +232,7 @@ void testAL(){
 		
 		assert(allocator.usedSlots==0);
 	}
-
+	
 }
 unittest{
 	//testAL();

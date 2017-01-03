@@ -8,8 +8,12 @@ import core.memory;
 import std.conv:emplace;
 import core.memory;
 import std.experimental.allocator;
+import std.experimental.allocator.mallocator;
 
-import job_manager.multithreaded_utils;
+import job_manager.shared_allocator;
+import job_manager.shared_utils;
+
+//import job_manager.multithreaded_utils;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
 //By Herb Sutter
 
@@ -44,12 +48,12 @@ private:
 
 public:
 	this() {
-		allocator=mallocator.make!Allocator();
+		allocator=Mallocator.instance.make!Allocator();
 		first = last =  allocator.make!(Node)( T.init );		
 		producerLock = consumerLock = false;
 	}
 	~this(){
-		mallocator.dispose(allocator);
+		Mallocator.instance.dispose(allocator);
 	}
 
 	
@@ -117,8 +121,8 @@ import std.random:uniform;
 static int[] tmpArr=[1,1,1,1,1,1];
 void testLLQ(){
 	shared uint addedElements;
-	LowLockQueue!int queue=mallocator.make!(LowLockQueue!int);
-	scope(exit)mallocator.dispose(queue);
+	LowLockQueue!int queue=Mallocator.instance.make!(LowLockQueue!int);
+	scope(exit)Mallocator.instance.dispose(queue);
 
 	void testLLQAdd(){
 		uint popped;
@@ -176,14 +180,15 @@ public:
 	
 }
 
+import job_manager.vector;
 class LockedVector(T){
 	Vector!T array;
 public:
 	this(){
-		array=mallocator.make!(Vector!T);
+		array=Mallocator.instance.make!(Vector!T);
 	}
 	~this(){
-		mallocator.dispose(array);
+		Mallocator.instance.dispose(array);
 	}
 	bool empty(){
 		return(array.length==0);
@@ -199,6 +204,11 @@ public:
 			array~=t;
 		}
 	}
+	void removeElement( T elem ) {
+		synchronized( this ){
+			array.removeElement(elem);
+		}
+	}
 	
 	T pop(  ) {
 		synchronized( this ){
@@ -208,138 +218,8 @@ public:
 			return obj;
 		}
 	}
-	
-}
-
-
-class Vector(T){
-@nogc:
-	T[] array;
-	size_t used;
-public:
-	this(size_t numElements=1){
-		assert(numElements>0);
-		extend(numElements);
-	}
-	bool empty(){
-		return (used==0);
-	}
-	size_t length(){
-		return used;
-	}	
-	void reserve(size_t numElements){
-		if(numElements>array.length){
-			extend(numElements);
-		}
-	}
-
-	void extend(size_t newNumOfElements){
-		auto oldArray=manualExtend(newNumOfElements);
-		if(oldArray !is null){
-			freeData(oldArray);
-		}
-	}
-	void[] manualExtend(size_t newNumOfElements=0){
-		if(newNumOfElements==0)newNumOfElements=array.length*2;
-		T[] oldArray=array;
-		size_t oldSize=oldArray.length*T.sizeof;
-		size_t newSize=newNumOfElements*T.sizeof;
-		//T[] memory=mallocator.makeArray!(T)(newNumOfElements);
-		//memcpy(cast(void*)memory.ptr,cast(void*)oldArray.ptr,oldSize);
-		//array=memory;
-		T* memory=cast(T*)malloc(newSize);
-		memcpy(cast(void*)memory,cast(void*)oldArray.ptr,oldSize);
-		array=memory[0..newNumOfElements];
-		return cast(void[])oldArray;
-		
-	}
-	bool canAddWithoutRealloc(uint elemNum=1){
-		return used+elemNum<=array.length;
-	}
-
-	void add( T  t ) {
-		if(used>=array.length){
-			extend(array.length*2);
-		}
-		array[used]=t;
-		used++;
-	}
-
-	void add( T[]  t ) {
-		if(used+t.length>array.length){
-			extend(nextPow2(used+t.length));
-		}
-		foreach(i;0..t.length){
-			array[used+i]=t[i];
-		}
-		used+=t.length;
-	}
-	void remove(size_t elemNum){
-		array[elemNum]=array[used-1];
-		used--;
-	}
-
-	T opIndex(size_t elemNum){
-		assert(elemNum<used);
-		return array[elemNum];
-	}
 	auto opSlice(){
-		return array[0..used];
+		return array[];
 	}
-	size_t opDollar(){
-		return used;
-	}
-	void opOpAssign(string op)(T obj){
-		static assert(op=="~");
-		add(obj);
-	}
-	void opOpAssign(string op)(T[] obj){
-		static assert(op=="~");
-		add(obj);
-	}
-	void opIndexAssign(T obj,size_t elemNum){
-		assert(elemNum<used);
-		array[elemNum]=obj;
-
-	}
-	
-}
-unittest{
-	Vector!int vec=new Vector!int;
-	assert(vec.empty);
-	vec.add(0);
-	vec.add(1);
-	vec.add(2);
-	vec.add(3);
-	vec.add(4);
-	vec.add(5);
-	assert(vec.length==6);
-	assert(vec[3]==3);
-	assert(vec[5]==5);
-	assert(vec[]==[0,1,2,3,4,5]);
-	assert(!vec.empty);
-	vec.remove(3);
-	assert(vec.length==5);
-	assert(vec[]==[0,1,2,5,4]);//unstable remove
-
-}
-
-unittest{
-	Vector!int vec=new Vector!int;
-	assert(vec.empty);
-	vec~=[0,1,2,3,4,5];
-	assert(vec[]==[0,1,2,3,4,5]);
-	assert(vec.length==6);
-	vec~=6;
-	assert(vec[]==[0,1,2,3,4,5,6]);
-	
-}
-
-
-unittest{
-	Vector!int vec=new Vector!int;
-	vec~=[0,1,2,3,4,5];
-	vec[3]=33;
-	assert(vec[3]==33);
 	
 }

@@ -2,21 +2,20 @@
 
 import core.atomic;
 import core.cpuid:threadsPerCPU;
-import core.stdc.stdlib;
 import core.stdc.string:memset;
 import core.thread:Thread,ThreadID,sleep,Fiber;
-import std.algorithm:remove;
 import std.conv:to;
 import std.format:format;
 import std.stdio:write,writeln,writefln;
-import std.traits:ReturnType,Parameters,TemplateOf;
+import std.traits:Parameters;
 
 
 
-import job_manager.cache_vector;
+import job_manager.fiber_cache;
 import job_manager.job_vector;
-import job_manager.multithreaded_utils;
+import job_manager.shared_utils;
 import job_manager.universal_delegate;
+import job_manager.debug_data;
 
 enum bool useMultithreated=true;
 
@@ -254,8 +253,11 @@ struct UniversalJob(Delegate){
 	JobDelegate runDel;//wraper to decrement counter on end
 	JobDelegate* delPointer;
 	Counter* counter;
-	void run(){	
+	void run(){
+		//Execution exec=Execution(unDel.getFuncPtr);
 		unDel.callAndSaveReturn();
+		//exec.end();
+		//storeExecution(exec);
 		if(counter !is null && counter.waitingFiber!=counter.waitingFiber.init){
 			counter.decrement();
 		}
@@ -628,18 +630,16 @@ void testPerformanceMatrix(){
 	writefln( "BenchmarkMatrix: %s*%s : %s[us], %s[it/us] %s",iterations,matricesNum,sw.peek().usecs,cast(float)iterations*matricesNum/sw.peek().usecs,result/base);
 }
 void testForeach(){
-	int[] ints;
-	ints.length=200;
+	int[200] ints;
 	shared uint sum=0;
 	foreach(ref int el;ints.multithreated){
 		atomicOp!"+="(sum,1);
 		activeSleep(100);//simulate load for 100us
 	}
 	foreach(int i ,ref int el;ints.multithreated){
-		writeln(i);
 		activeSleep(100);
 	}
-	writeln(sum);
+	assert(sum==200);
 }
 void testNoMultithreated(){
 	static if(!useMultithreated){
@@ -663,7 +663,7 @@ void test(uint threadsNum=16){
 		//Thread.sleep(2.seconds);
 		//foreach(i;0..10000)
 		{
-			int[] pp=	new int[1000];
+			//int[] pp=	new int[1000];
 			jobManager.debugHelper.resetCounters();
 			int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 			assert(jobManager.debugHelper.jobsAdded==jobsRun+1);

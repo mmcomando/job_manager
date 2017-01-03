@@ -1,4 +1,4 @@
-﻿module job_manager.cache_vector;
+﻿module job_manager.fiber_cache;
 
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
@@ -6,9 +6,16 @@ import core.atomic;
 import core.thread:Fiber,Thread;
 import core.memory;
 
-import job_manager.multithreaded_utils;
+import job_manager.shared_utils;
 import job_manager.job_vector;
 
+//only one warning about GC
+Fiber newFiber(){
+	static void dummy(){}
+	Fiber fiber = new Fiber(&dummy);
+	fiber.call();
+	return fiber;
+}
 
 ///returns data if it is marked as unused, if there is no space realocates
 class FiberVectorCache{
@@ -44,11 +51,8 @@ class FiberVectorCache{
 	T initVar(){
 		static void dummy(){}
 		//auto fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
-		Fiber fiber = new Fiber(&dummy);
-
+		Fiber fiber = newFiber();
 		GC.addRoot(cast(void*)fiber);
-
-		fiber.call();
 		assert(fiber.state==Fiber.State.TERM);
 		return fiber;
 	}
@@ -159,19 +163,14 @@ class FiberVectorCache{
 }
 
 class FiberNoCache{
-	static void dummy(){}
-
 	Fiber getData(uint,uint){
-		//Fiber  fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
-		Fiber fiber = new Fiber(&dummy);
-		GC.addRoot(cast(void*)fiber);			
-		fiber.call();
+		Fiber fiber = newFiber();
+		GC.addRoot(cast(void*)fiber);		
 		
 		return fiber;
 	}
 	void removeData(Fiber obj,uint,uint){
 		GC.removeRoot(cast(void*)obj);
-		//mallocator.dispose(obj);
 	}
 
 }
@@ -183,10 +182,8 @@ class FiberOneCache{
 	Fiber getData(uint,uint){
 		Fiber fiber;
 		if(lastFreeFiber is null){
-			//fiber=mallocator.make!(Fiber)(&dummy);//new Fiber(&dummy);
-			fiber = new Fiber(&dummy);
-			GC.addRoot(cast(void*)fiber);			
-			fiber.call();
+			fiber = newFiber();
+			GC.addRoot(cast(void*)fiber);
 		}else{
 			fiber=lastFreeFiber;
 			lastFreeFiber=null;
@@ -203,24 +200,23 @@ class FiberOneCache{
 	}
 }
 
+import job_manager.vector;
 static Vector!Fiber array;
 static uint used=0;
 static this(){
-	array=new Vector!Fiber;
+	array=mallocator.make!(Vector!Fiber);
 	array.reserve(16);
 }
 class FiberTLSCache{
-	static void dummy(){}
 
 	this(){}
 	
 	Fiber getData(uint,uint){
 		Fiber fiber;
 		if(array.length<=used){
-			fiber=new Fiber(&dummy);
+			fiber= newFiber();
 			array~=fiber;
 			GC.addRoot(cast(void*)fiber);	
-			fiber.call();
 			used++;
 			return fiber;
 		}
@@ -233,7 +229,6 @@ class FiberTLSCache{
 			if(obj == fiber){
 				array[i]=array[used-1];
 				array[used-1]=obj;
-				//array.remove(i);
 				used--;
 				return;
 			}
