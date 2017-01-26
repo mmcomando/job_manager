@@ -66,7 +66,7 @@ class DebugSink{
 		int[] allocated=oneRange.array;
 		allocated.sort();
 		assertM(allocated.length,expectedNum);
-		allocated.length -= allocated.uniq().copy(allocated).length;
+		allocated= allocated[0..allocated.length-allocated.uniq().copy(allocated).length];
 		assertM(allocated.length,expectedNum);
 	}
 }

@@ -4,8 +4,7 @@ import job_manager;
 
 void my_main()
 {
-	int[] ints;
-	ints.length=200;
+	int[200] ints;
 	shared uint sum=0;
 	foreach(ref int el;ints.multithreated){
 		import core.atomic;
