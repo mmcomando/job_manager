@@ -14,9 +14,9 @@ void writelnng(T...)(T args){
 	assumeNoGC( (T arg){writeln(arg);})(args);
 }
 
-void assertM(A,B)(A a,B b){
+void assertM(A,B,string file=__FILE__,uint line=__LINE__)(A a,B b){
 	if(a!=b){
-		writefln("A: %s, B: %s",a,b);
+		writefln("File: %s:%s  A: %s, B: %s",file,line,a,b);
 		assert(a==b);
 	}
 }
@@ -46,8 +46,8 @@ version(linux){
 }
 
 void printException(Exception e, int maxStack = 4) {
-	writeln("Exception message: ", e.msg);
-	writefln("File: %s Line Number: %s Thread: %s", e.file, e.line);
+	writeln("Exception message: %s", e.msg);
+	writefln("File: %s Line Number: %s", e.file, e.line);
 	writeln("Call stack:");
 	foreach (i, b; e.info) {
 		writeln(b);

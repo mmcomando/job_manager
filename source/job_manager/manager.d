@@ -14,6 +14,7 @@ import std.traits:Parameters;
 import job_manager.fiber_cache;
 import job_manager.job_vector;
 import job_manager.shared_utils;
+import job_manager.shared_queue;
 import job_manager.utils;
 import job_manager.universal_delegate;
 import job_manager.debug_data;

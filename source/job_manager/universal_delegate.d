@@ -1,43 +1,18 @@
 ﻿module job_manager.universal_delegate;
 import std.traits:ReturnType,Parameters,isFunctionPointer,isDelegate,ParameterStorageClassTuple,ParameterStorageClass,AliasSeq;
 
-template getPointer(T){
-	alias getPointer = T*;	
-}
-
-///Replaces ref variables with pointer
-private template getDelegateArgumentsSave(Delegate){
-	alias getDelegateArgumentsSave=getDelegateArgumentsSaveImpl!(ParameterStorageClassTuple!Delegate,Parameters!Delegate).result;
-}
-private template getDelegateArgumentsSaveImpl(args...)
-	if(args.length%2==0)
-{
-	enum half=args.length/2;
-	alias pstc = args[0 .. half];
-	alias tuple  = args[half .. $];
-	
-	static if (tuple.length)
-	{
-		alias head = tuple[0];
-		alias tail = tuple[1 .. $];
-		alias next = getDelegateArgumentsSaveImpl!(AliasSeq!(pstc[1..$],tuple[1..$])).result;
-		static if (pstc[0] == ParameterStorageClass.ref_)
-			alias result = AliasSeq!(getPointer!head, next);
-		else
-			alias result = AliasSeq!(head, next);
-	}
-	else
-	{
-		alias result = AliasSeq!();
-	}
-}
-
 
 
 auto makeUniversalDelegate(T)(T del,Parameters!(T) args){
 	return UniversalDelegate!(T)(del,args);
 }
+/**
+Struct which stores all parameters for given delegate.
+Mainly used to store delegate with patameters for future call.
+May be used to convert: AnyType deletage(SomeTypes..) to void delegate()
 
+Ref parameters are stored as a pointers
+ */
 struct UniversalDelegate(Delegate)
 {
 	static assert(is(Delegate == function) || isFunctionPointer!Delegate || isDelegate!Delegate,"Provided type has to be: delegate, function, function pointer" );
@@ -101,6 +76,36 @@ struct UniversalDelegate(Delegate)
 	}
 }
 
+template getPointer(T){
+	alias getPointer = T*;	
+}
+
+///Replaces ref variables with pointer
+private template getDelegateArgumentsSave(Delegate){
+	alias getDelegateArgumentsSave=getDelegateArgumentsSaveImpl!(ParameterStorageClassTuple!Delegate,Parameters!Delegate).result;
+}
+private template getDelegateArgumentsSaveImpl(args...)
+	if(args.length%2==0)
+{
+	enum half=args.length/2;
+	alias pstc = args[0 .. half];
+	alias tuple  = args[half .. $];
+	
+	static if (tuple.length)
+	{
+		alias head = tuple[0];
+		alias tail = tuple[1 .. $];
+		alias next = getDelegateArgumentsSaveImpl!(AliasSeq!(pstc[1..$],tuple[1..$])).result;
+		static if (pstc[0] == ParameterStorageClass.ref_)
+			alias result = AliasSeq!(getPointer!head, next);
+		else
+			alias result = AliasSeq!(head, next);
+	}
+	else
+	{
+		alias result = AliasSeq!();
+	}
+}
 
 @nogc nothrow:
 /// Using Deleagte

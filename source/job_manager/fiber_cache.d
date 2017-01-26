@@ -242,7 +242,7 @@ import std.conv:to;
 
 //test extend
 unittest{
-	FiberVector vec=new FiberVector(1);assert(vec.dataArray.length==1);
+	FiberVectorCache vec=new FiberVectorCache(1);assert(vec.dataArray.length==1);
 	vec.dataArray=vec.extendArray(2,vec.dataArray);assert(vec.dataArray.length==2);
 	vec.dataArray=vec.extendArray(3,vec.dataArray);assert(vec.dataArray.length==3);
 	vec.dataArray=vec.extendArray(4,vec.dataArray);assert(vec.dataArray.length==4);
@@ -256,7 +256,7 @@ unittest{
 		import etc.linux.memoryerror;
 		registerMemoryErrorHandler();
 	}
-	FiberVector vec=new FiberVector(10);
+	FiberVectorCache vec=new FiberVectorCache(10);
 	T var;
 	foreach(i;0..10){
 		var=vec.getData();assert(vec.dataArray.length==10);
