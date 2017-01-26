@@ -125,9 +125,9 @@ struct UniversalJobGroup(Delegate){
 	}
 }
 
-///allocates memory for UniversalJobGroup
-///has to be a mixin because the code has to be executed in calling scope (alloca)
-/////TODO add calloc (it is in git history)
+//Like getStackMemoryAlloca bt without Alloca
+//I dont see performance difference beetwen alloca and malloc
+//Use thi sbecause it certainly dont have any aligment problems
 string getStackMemory(string varName){	
 	string code=format("	
 	%s.mallocatorAllocate();
@@ -137,6 +137,38 @@ string getStackMemory(string varName){
 ",varName,varName);
 	return code;
 }
+
+///allocates memory for UniversalJobGroup
+///has to be a mixin because the code has to be executed in calling scope (alloca)
+string getStackMemoryAlloca(string varName){
+	string code=format(		"
+import core.stdc.stdlib:alloca;
+	bool ___useStack%s=%s.jobsNum<200;
+	
+    //TODO aligment?
+    //if stack not used alloca 0  :]
+    %s.unJobs=(cast(%s.UnJob*)    alloca(%s.UnJob.sizeof      *%s.jobsNum*___useStack%s))[0..%s.jobsNum*___useStack%s];
+	%s.dels  =(cast(JobDelegate**)alloca((JobDelegate*).sizeof*%s.jobsNum*___useStack%s))[0..%s.jobsNum*___useStack%s];
+
+
+    if(!___useStack%s){
+		%s.mallocatorAllocate();    
+    }
+    scope(exit){if(!___useStack%s){
+       %s.mallocatorDeallocate();
+	}}
+		",varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName,varName,varName,
+		varName,varName);
+	return code;
+	
+	
+}
+
+
+
 
 
 
