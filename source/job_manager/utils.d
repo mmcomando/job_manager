@@ -45,7 +45,7 @@ version(linux){
 	}
 }
 
-void printException(Exception e, int maxStack = 4) {
+void printException(Exception e, int maxStack = 40) {
 	writeln("Exception message: %s", e.msg);
 	writefln("File: %s Line Number: %s", e.file, e.line);
 	writeln("Call stack:");

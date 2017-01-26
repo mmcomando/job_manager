@@ -7,13 +7,12 @@ import core.thread:Fiber,Thread;
 import core.memory;
 
 import job_manager.shared_utils;
-import job_manager.job_vector;
 
 //only one warning about GC
 Fiber newFiber(){
 	static void dummy(){}
 	Fiber fiber = new Fiber(&dummy);
-	GC.addRoot(cast(void*)fiber);	
+//	GC.addRoot(cast(void*)fiber);	
 	fiber.call();
 	return fiber;
 }

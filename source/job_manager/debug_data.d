@@ -2,7 +2,7 @@
 
 import std.datetime;
 import job_manager.vector;
-import job_manager.job_vector;
+import job_manager.shared_vector;
 import std.experimental.allocator;
 import std.experimental.allocator.mallocator;
 

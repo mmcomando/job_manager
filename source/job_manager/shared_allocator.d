@@ -7,7 +7,6 @@ import std.experimental.allocator.mallocator;
 
 import job_manager.shared_utils;
 import job_manager.utils;
-import job_manager.job_vector;
 import job_manager.vector;
 
 

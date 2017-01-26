@@ -1,4 +1,4 @@
-﻿module job_manager.shsared_vector;
+﻿module job_manager.shared_vector;
 
 
 import std.experimental.allocator;
