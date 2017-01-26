@@ -1,32 +1,37 @@
-﻿module job_manager.manager_utils;
+﻿/**
+ Modules contains basic structures for job manager ex. FiberData, Counter. 
+ It also contains structures/functions which extens functionality of job manager like:
+ - UniversalJob - job with parameters and return value
+ - UniversalJobGroup - group of jobs 
+ - multithreated - makes foreach execute in parallel
+ */
+module job_manager.manager_utils;
 
 import core.atomic;
-import std.format:format;
+import core.stdc.string : memset,memcpy;
+import core.thread : Fiber;
+
+import std.experimental.allocator;
+import std.experimental.allocator.mallocator;
+import std.format : format;
+import std.traits : Parameters;
 
 import job_manager.manager;
 
-import job_manager.fiber_cache;
-import job_manager.shared_utils;
-import job_manager.shared_queue;
-import job_manager.utils;
-import job_manager.universal_delegate;
-import job_manager.debug_data;
-import job_manager.debug_sink;
-
-import std.traits:Parameters;
-import core.thread:Thread,ThreadID,sleep,Fiber;
-
 uint jobManagerThreadNum;//thread local var
 alias JobDelegate=void delegate();
+
 struct FiberData{
 	Fiber fiber;
 	uint threadNum;
 }
+
 FiberData getFiberData(){
 	Fiber fiber=Fiber.getThis();
 	assert(fiber !is null);
 	return FiberData(fiber,jobManagerThreadNum);
 }
+
 struct Counter{
 	align (64)shared uint count;
 	align (64)FiberData waitingFiber;
@@ -61,7 +66,7 @@ struct UniversalJob(Delegate){
 		//exec.end();
 		//storeExecution(exec);
 		if(counter !is null && counter.waitingFiber!=counter.waitingFiber.init){
-			counter.decrement();
+			static if(multithreatedManagerON)counter.decrement();
 		}
 	}
 	
@@ -72,6 +77,68 @@ struct UniversalJob(Delegate){
 	}
 	
 }
+//It is faster to add array of jobs
+struct UniversalJobGroup(Delegate){
+	alias UnJob=UniversalJob!(Delegate);
+	Counter counter;
+	uint jobsNum;
+	uint jobsAdded;
+	UnJob[] unJobs;
+	JobDelegate*[] dels;
+	
+	this(uint jobsNum){
+		this.jobsNum=jobsNum;
+	}
+	void add(Delegate del,Parameters!(Delegate) args){
+		assert(unJobs.length>0 && jobsAdded<jobsNum);
+		unJobs[jobsAdded].initialize(del,args);
+		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
+		jobsAdded++;
+	}
+	//returns range so you can allocate it as you want
+	//but remember: that data is stack allocated
+	auto wait(){
+		assert(jobsAdded==jobsNum);
+		counter.count=jobsNum;
+		counter.waitingFiber=getFiberData();
+		foreach(ref unDel;unJobs){
+			unDel.counter=&counter;
+		}
+		jobManager.addJobsAndYield(dels);
+		import std.algorithm:map;
+		static if(UnJob.UnDelegate.hasReturn){
+			return unJobs.map!(a => a.unDel.result);
+		}
+		
+	}
+	//used by getStackMemory
+
+	void mallocatorAllocate(){
+		unJobs=Mallocator.instance.makeArray!(UnJob)(jobsNum);
+		dels=Mallocator.instance.makeArray!(JobDelegate*)(jobsNum);
+	}
+	void mallocatorDeallocate(){
+		memset(unJobs.ptr,0,UnJob.sizeof*jobsNum);
+		memset(dels.ptr,0,(JobDelegate*).sizeof*jobsNum);
+		Mallocator.instance.dispose(unJobs);
+		Mallocator.instance.dispose(dels);
+	}
+}
+
+///allocates memory for UniversalJobGroup
+///has to be a mixin because the code has to be executed in calling scope (alloca)
+/////TODO add calloc (it is in git history)
+string getStackMemory(string varName){	
+	string code=format("	
+	%s.mallocatorAllocate();
+    scope(exit){
+	    %s.mallocatorDeallocate();
+	}
+",varName,varName);
+	return code;
+}
+
+
 
 auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	UniversalJob!(Delegate) unJob;
@@ -154,70 +221,7 @@ auto multithreated(T)(T[] slice){
 }
 
 
-struct UniversalJobGroup(Delegate){
-	alias UnJob=UniversalJob!(Delegate);
-	Counter counter;
-	uint jobsNum;
-	uint jobsAdded;
-	UnJob[] unJobs;
-	JobDelegate*[] dels;
-	
-	this(uint jobsNum){
-		this.jobsNum=jobsNum;
-	}
-	void add(Delegate del,Parameters!(Delegate) args){
-		assert(unJobs.length>0 && jobsAdded<jobsNum);
-		unJobs[jobsAdded].initialize(del,args);
-		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
-		jobsAdded++;
-	}
-	//returns range so you can allocate it as you want
-	//but remember: that data is stack allocated
-	auto wait(){
-		assert(jobsAdded==jobsNum);
-		counter.count=jobsNum;
-		counter.waitingFiber=getFiberData();
-		foreach(ref unDel;unJobs){
-			unDel.counter=&counter;
-		}
-		//writeln("+44");
-		jobManager.addJobsAndYield(dels);
-		//writeln("+55");
-		import std.algorithm:map;
-		static if(UnJob.UnDelegate.hasReturn){
-			return unJobs.map!(a => a.unDel.result);
-		}
-		
-	}
-}
-
-///allocates memory for UniversalJobGroup
-///has to be a mixin because the code has to be executed in calling scope (alloca)
-string getStackMemory(string varName){
-	string code=format(		"
-	import std.experimental.allocator;
-	import std.experimental.allocator.mallocator;
-    import core.stdc.string:memset;
-	uint ___jobsNum%s=%s.jobsNum;
-	
-	%s.unJobs=Mallocator.instance.makeArray!(%s.UnJob)(___jobsNum%s);
-	%s.dels=Mallocator.instance.makeArray!(JobDelegate*)(___jobsNum%s);
-
-	
-
-    scope(exit){
-      /* memset(%s.unJobs.ptr,0,%s.UnJob.sizeof*___jobsNum%s);
-       memset(%s.dels.ptr,0,(JobDelegate*).sizeof*___jobsNum%s);
-	   Mallocator.instance.dispose(%s.unJobs);
-	   Mallocator.instance.dispose(%s.dels);*/
-	}
 
 
-		",varName,varName,varName,varName,
-		varName,varName,varName,varName,
-		varName,varName,varName,varName,
-		varName,varName);
-	return code;
-	
-	
-}
+
+

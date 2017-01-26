@@ -1,4 +1,7 @@
-﻿module job_manager.universal_delegate;
+﻿/**
+Module contains UniversalDelegate, usefull to change complicated delegates to void delegate(void) 
+*/
+module job_manager.universal_delegate;
 import std.traits:ReturnType,Parameters,isFunctionPointer,isDelegate,ParameterStorageClassTuple,ParameterStorageClass,AliasSeq;
 
 

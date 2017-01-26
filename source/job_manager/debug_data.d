@@ -1,4 +1,10 @@
-﻿module job_manager.debug_data;
+﻿/**
+Module used to store information about executed jobs. 
+Information is stored using function pointer and times of start and end of a job.
+
+Data should be retrived by only one thread.
+*/
+module job_manager.debug_data;
 
 //import std.datetime;
 import core.time;

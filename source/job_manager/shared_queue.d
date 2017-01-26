@@ -1,4 +1,7 @@
-﻿module job_manager.shared_queue;
+﻿/**
+Module with queue
+ */
+module job_manager.shared_queue;
 
 import core.atomic;
 import std.experimental.allocator;
@@ -8,6 +11,8 @@ import job_manager.shared_allocator;
 //algorithm from  http://collaboration.cmc.ec.gc.ca/science/rpn/biblio/ddj/Website/articles/DDJ/2008/0811/081001hs01/081001hs01.html
 //By Herb Sutter
 
+//Maybe the fastest for not contested resource
+//lock type is mainly used to distinguish operations in profiler (different function names if not inlined)
 class LowLockQueue(T,LockType=bool) {
 private:
 	static struct Node {

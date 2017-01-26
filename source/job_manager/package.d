@@ -1,4 +1,7 @@
-﻿module job_manager;
+﻿/**
+Module which presents functionality to the user
+ */
+module job_manager;
 
 private import job_manager.manager;
 public import job_manager.manager_utils:multithreated;

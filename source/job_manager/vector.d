@@ -1,4 +1,7 @@
-﻿module job_manager.vector;
+﻿/**
+Module with simpel singlethreated vector
+*/
+module job_manager.vector;
 
 import core.bitop;
 import core.stdc.stdlib:malloc,free;

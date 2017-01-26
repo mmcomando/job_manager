@@ -1,20 +1,23 @@
-﻿module job_manager.manager_singlethreated;
+﻿/**
+Module implements singlethreated job manager with fibers (coroutines).
+Rather for debugging than for anything else.
+ */
+module job_manager.manager_singlethreated;
+
+import core.thread : Fiber;
+
+import std.functional : toDelegate;
+import std.stdio : write,writeln,writefln;
 
 import job_manager.fiber_cache;
 import job_manager.manager_utils;
 import job_manager.shared_utils;
-import std.functional:toDelegate;
-import std.stdio:write,writeln,writefln;
+import job_manager.utils;
 
 //alias CacheVector=FiberNoCache;
 //alias CacheVector=FiberOneCache;
 //alias CacheVector=FiberVectorCache;
 alias CacheVector=FiberTLSCache;
-
-
-import job_manager.utils;
-import core.thread:Fiber;
-
 
 
 

@@ -1,4 +1,7 @@
-﻿module job_manager.utils;
+﻿/**
+Module with some usefull functions
+*/
+module job_manager.utils;
 
 import std.traits;
 import std.stdio:writefln,writeln;

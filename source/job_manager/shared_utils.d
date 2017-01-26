@@ -1,16 +1,16 @@
-﻿module job_manager.shared_utils;
-
-import core.thread;
-import core.cpuid:threadsPerCPU;
-import core.stdc.string:memset,memcpy;
-import core.stdc.stdlib:malloc,free;
-import std.stdio:writeln,writefln;
-import std.random:uniform;
-import std.conv:to;
-import std.experimental.allocator.building_blocks;
-
+﻿/**
+Module with helper functions for multithreated modules
+ */
+module job_manager.shared_utils;
 
 public import std.experimental.allocator:make,makeArray,dispose;
+
+import core.cpuid : threadsPerCPU;
+import core.thread;
+
+import std.conv : to;
+import std.experimental.allocator.building_blocks;
+import std.stdio : writeln,writefln;
 
 shared Mallocator mallocator;
 //shared GCAllocator mallocator;

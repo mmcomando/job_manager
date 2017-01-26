@@ -1,4 +1,7 @@
-﻿module job_manager.shared_allocator;
+﻿/**
+Module  contains multithreated allcoators. Few of them with similar interface.
+ */
+module job_manager.shared_allocator;
 
 import std.stdio;
 import std.conv:emplace;

@@ -1,4 +1,11 @@
-﻿module job_manager.debug_sink;
+﻿/**
+Module used to efficiently store simple data from many threads.
+May be used for validation multithreated algorithms.
+Ex. multithreated executes 1000 jobs, each jobs adds to sink unique number.
+After execution if in this sink are all 1000 numbers and all are unique everything was ok.
+*/
+
+module job_manager.debug_sink;
 
 
 import std.experimental.allocator;

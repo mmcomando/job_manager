@@ -1,18 +1,16 @@
-﻿module job_manager.shared_vector;
+﻿/**
+Module with multithreated vectors.
+ */
+module job_manager.shared_vector;
 
-
+import std.algorithm : remove;
 import std.experimental.allocator;
 import std.experimental.allocator.mallocator;
 
 import job_manager.shared_allocator;
 import job_manager.vector;
 
-
-
-
-
 ////////////////////
-import std.algorithm:remove;
 
 class LockedVectorBuildIn(T){
 	T[] array;

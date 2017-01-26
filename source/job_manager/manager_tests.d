@@ -1,34 +1,23 @@
-﻿module job_manager.manager_tests;
+﻿/**
+Multithreated test may take some space so they are there.
+ */
+module job_manager.manager_tests;
 
 import core.atomic;
-import core.cpuid:threadsPerCPU;
-import core.stdc.string:memset;
-import core.thread:Thread,ThreadID,sleep,Fiber;
-import std.conv:to;
-import std.format:format;
-import std.stdio:write,writeln,writefln;
-import std.traits:Parameters;
-import std.functional:toDelegate;
-import std.datetime;
+import core.memory;
+import core.simd;
+import core.thread : Thread,ThreadID,sleep,Fiber;
 
-import job_manager.fiber_cache;
-import job_manager.shared_utils;
-import job_manager.shared_queue;
-import job_manager.utils;
-import job_manager.universal_delegate;
-import job_manager.debug_data;
+import std.algorithm : sum;
+import std.datetime;
+import std.functional : toDelegate;
+import std.random : uniform;
+import std.stdio : write,writeln,writefln;
+
 import job_manager.debug_sink;
-import job_manager.manager_utils;
-
-import std.datetime;
-import std.functional:toDelegate;
-import std.random:uniform;
-import std.algorithm:sum;
-
 import job_manager.manager;
-
-
-
+import job_manager.shared_utils;
+import job_manager.utils;
 void makeTestJobsFrom(void function() fn,uint num){
 	makeTestJobsFrom(fn.toDelegate,num);
 }
@@ -53,7 +42,7 @@ void testFiberLockingToThread(){
 		assert(id==Thread.getThis.id);
 	}
 }
-import core.memory;
+
 //returns how many jobs it have spawned
 int randomRecursionJobs(int deepLevel){
 	alias UD=UniversalDelegate!(int function(int));
@@ -149,7 +138,7 @@ void testPerformanceSleep(){
 
 
 
-import core.simd;
+
 alias mat4=float[16];
 //import gl3n.linalg;
 void mulMat(mat4[] mA,mat4[] mB,mat4[] mC){

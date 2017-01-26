@@ -1,4 +1,9 @@
-﻿module job_manager.fiber_cache;
+﻿/**
+Containers used to store Fiber objects.
+Allocating new Fiber is expensive so need for this containers.
+There are few implementations which can be easly changed and tested for performance or correctness.
+*/
+module job_manager.fiber_cache;
 
 import core.stdc.stdlib:malloc,free;
 import core.stdc.string:memset,memcpy;
