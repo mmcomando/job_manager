@@ -1,12 +1,12 @@
 ﻿module job_manager;
 
-public import job_manager.manager:jobManager;
-public import job_manager.manager;
+private import job_manager.manager;
 public import job_manager.manager_utils:multithreated;
-public import job_manager.manager_tests;
+private import job_manager.manager_tests;
 
-
-
+void startMainLoop(void function() mainLoop,uint threadsCount=0){
+	jobManager.startMainLoop(mainLoop,threadsCount);
+}
 void testMultithreated(){
 	testScalability();
 }

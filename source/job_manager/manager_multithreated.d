@@ -140,7 +140,7 @@ class JobManager{
 		assert(waitingFibers.length==threadPool.length);
 		assert(fiberData.fiber.state!=Fiber.State.TERM );//&& fiberData.fiber.state!=Fiber.State.EXEC
 		debugHelper.fibersAddedAdd();
-		waitingFibers[fiberData.threadNum].add(fiberData);
+		waitingFibers[fiberData.threadNum].add(fiberData);//range violation??
 	}
 	//Only for debug and there it ma cause bugs
 	void addThisFiberAndYield(FiberData thisFiber){

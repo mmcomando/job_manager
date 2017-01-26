@@ -10,7 +10,7 @@ import job_manager.utils;
 import job_manager.vector;
 
 
-class MyMallcoator{
+class MyMallocator{
 	shared Mallocator allocator;
 	this(){
 		allocator=Mallocator.instance;
