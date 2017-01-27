@@ -58,7 +58,6 @@ struct UniversalJob(Delegate){
 	alias UnDelegate=UniversalDelegate!Delegate;
 	UnDelegate unDel;//user function to run, with parameters and return value
 	JobDelegate runDel;//wraper to decrement counter on end
-	JobDelegate* delPointer;
 	Counter* counter;
 	void run(){
 		//Execution exec=Execution(unDel.getFuncPtr);
@@ -73,7 +72,6 @@ struct UniversalJob(Delegate){
 	void initialize(Delegate del,Parameters!(Delegate) args){
 		unDel=makeUniversalDelegate!(Delegate)(del,args);
 		runDel=&run;
-		delPointer=&runDel;
 	}
 	
 }
@@ -92,7 +90,7 @@ struct UniversalJobGroup(Delegate){
 	void add(Delegate del,Parameters!(Delegate) args){
 		assert(unJobs.length>0 && jobsAdded<jobsNum);
 		unJobs[jobsAdded].initialize(del,args);
-		dels[jobsAdded]=unJobs[jobsAdded].delPointer;
+		dels[jobsAdded]=&unJobs[jobsAdded].runDel;
 		jobsAdded++;
 	}
 	//returns range so you can allocate it as you want
@@ -179,7 +177,7 @@ auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	counter.count=1;
 	counter.waitingFiber=getFiberData();
 	unJob.counter=&counter;
-	jobManager.addJobAndYield(unJob.delPointer);
+	jobManager.addJobAndYield(&unJob.runDel);
 	static if(unJob.unDel.hasReturn){
 		return unJob.unDel.result;
 	}

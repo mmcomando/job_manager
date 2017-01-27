@@ -17,7 +17,7 @@ import job_manager.shared_utils;
 Fiber newFiber(){
 	static void dummy(){}
 	Fiber fiber = new Fiber(&dummy);
-//	GC.addRoot(cast(void*)fiber);	
+	GC.addRoot(cast(void*)fiber);	
 	fiber.call();
 	return fiber;
 }

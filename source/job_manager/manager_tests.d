@@ -24,13 +24,9 @@ void makeTestJobsFrom(void function() fn,uint num){
 void makeTestJobsFrom(JobDelegate deleg,uint num){
 	UniversalJobGroup!JobDelegate group=UniversalJobGroup!JobDelegate(num);
 	mixin(getStackMemory("group"));
-	//writeln(group.dels);
-	//writeln("+111");
 	foreach(int i;0..num){
 		group.add(deleg);
 	}
-	//writeln(group.dels);
-	//writeln("+22");
 	group.wait();
 }
 
@@ -68,14 +64,14 @@ shared int myCounter;
 void simpleYield(){
 	auto fiberData=getFiberData();
 	foreach(i;0..1){
-		DebugSink.add(atomicOp!"+="(myCounter,1));
+		//DebugSink.add(atomicOp!"+="(myCounter,1));
 		jobManager.addThisFiberAndYield(fiberData);
 	}
 }
 
 void testPerformance(){	
 	myCounter=0;
-	DebugSink.reset();	
+	//DebugSink.reset();	
 	uint iterations=1000;
 	uint packetSize=100;
 	StopWatch sw;
@@ -87,12 +83,12 @@ void testPerformance(){
 	foreach(int i;0..packetSize){
 		group.add(&simpleYield);
 	}
-	int[] pp=	new int[100];
+	//int[] pp=	new int[100];
 	foreach(i;0..iterations){
 		group.wait();
 	}
 	
-	DebugSink.verifyUnique(iterations*packetSize);
+	//DebugSink.verifyUnique(iterations*packetSize);
 	
 	assertM(jobManager.debugHelper.jobsAdded,iterations*packetSize);
 	assertM(jobManager.debugHelper.jobsDone ,iterations*packetSize);
@@ -218,7 +214,7 @@ void test(uint threadsNum=16){
 		//Thread.sleep(2.seconds);
 		//foreach(i;0..10000)
 		{
-			int[] pp=	new int[1000];
+			//int[] pp=	new int[1000];
 			jobManager.debugHelper.resetCounters();
 			int jobsRun=callAndWait!(typeof(&randomRecursionJobs))(&randomRecursionJobs,5);
 			assert(jobManager.debugHelper.jobsAdded==jobsRun+1);

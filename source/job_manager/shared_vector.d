@@ -81,5 +81,22 @@ public:
 	auto opSlice(){
 		return array[];
 	}
+
+	//allocated by mallocator
+	Vector!T vectorCopy(){
+		synchronized( this ){
+			auto vec=Mallocator.instance.make!(Vector!T)(array.length);
+			vec~=array[];
+			return vec;
+		}
+	}
+	Vector!T vectorCopyWithReset(){
+		synchronized( this ){
+			auto vec=Mallocator.instance.make!(Vector!T)(array.length);
+			vec~=array[];
+			array.reset;
+			return vec;
+		}
+	}
 	
 }
