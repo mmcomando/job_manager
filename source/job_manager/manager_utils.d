@@ -59,19 +59,20 @@ struct UniversalJob(Delegate){
 	UnDelegate unDel;//user function to run, with parameters and return value
 	JobDelegate runDel;//wraper to decrement counter on end
 	Counter* counter;
-	void run(){
-		//Execution exec=Execution(unDel.getFuncPtr);
+	void runWithCounter(){
+		assert(counter !is null);
 		unDel.callAndSaveReturn();
-		//exec.end();
-		//storeExecution(exec);
-		if(counter !is null && counter.waitingFiber!=counter.waitingFiber.init){
-			static if(multithreatedManagerON)counter.decrement();
-		}
+		static if(multithreatedManagerON)counter.decrement();
+	}
+	//had to be allcoated my Mallocator
+	void runAndDeleteMyself(){
+		unDel.callAndSaveReturn();
+		Mallocator.instance.dispose(&this);
 	}
 	
 	void initialize(Delegate del,Parameters!(Delegate) args){
 		unDel=makeUniversalDelegate!(Delegate)(del,args);
-		runDel=&run;
+		//runDel=&run;
 	}
 	
 }
@@ -90,7 +91,6 @@ struct UniversalJobGroup(Delegate){
 	void add(Delegate del,Parameters!(Delegate) args){
 		assert(unJobs.length>0 && jobsAdded<jobsNum);
 		unJobs[jobsAdded].initialize(del,args);
-		dels[jobsAdded]=&unJobs[jobsAdded].runDel;
 		jobsAdded++;
 	}
 	//returns range so you can allocate it as you want
@@ -99,8 +99,10 @@ struct UniversalJobGroup(Delegate){
 		assert(jobsAdded==jobsNum);
 		counter.count=jobsNum;
 		counter.waitingFiber=getFiberData();
-		foreach(ref unDel;unJobs){
-			unDel.counter=&counter;
+		foreach(i,ref unJob;unJobs){
+			unJob.counter=&counter;
+			unJob.runDel=&unJob.runWithCounter;
+			dels[i]=&unJob.runDel;
 		}
 		jobManager.addJobsAndYield(dels);
 		import std.algorithm:map;
@@ -173,11 +175,22 @@ import core.stdc.stdlib:alloca;
 auto callAndWait(Delegate)(Delegate del,Parameters!(Delegate) args){
 	UniversalJob!(Delegate) unJob;
 	unJob.initialize(del,args);
+	unJob.runDel=&unJob.runWithCounter;
 	Counter counter;
 	counter.count=1;
 	counter.waitingFiber=getFiberData();
 	unJob.counter=&counter;
 	jobManager.addJobAndYield(&unJob.runDel);
+	static if(unJob.unDel.hasReturn){
+		return unJob.unDel.result;
+	}
+}
+
+auto callAndNothing(Delegate)(Delegate del,Parameters!(Delegate) args){
+	UniversalJob!(Delegate)* unJob=Mallocator.instance.make!(UniversalJob!(Delegate));
+	unJob.initialize(del,args);
+	unJob.runDel=&unJob.runAndDeleteMyself;
+	jobManager.addJob(&unJob.runDel);
 	static if(unJob.unDel.hasReturn){
 		return unJob.unDel.result;
 	}

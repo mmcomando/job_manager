@@ -195,18 +195,24 @@ void testForeach(){
 	assert(sum==200);
 }
 
+void veryDummy(){
+	foreach(i;0..30)
+	//while(1)
+	writeln("Am I still dumb?");
+}
 void test(uint threadsNum=16){
 	
 	static void startTest(){
+		while(1){
 		import core.memory;
 		GC.disable();
 
-		
+			callAndNothing!(typeof((&veryDummy).toDelegate))((&veryDummy).toDelegate);
 		testForeach();
 
 		alias UnDel=void delegate();
 		makeTestJobsFrom(&testFiberLockingToThread,100);
-		foreach(i;0..400000)
+		//foreach(i;0..400000)
 			callAndWait!(UnDel)((&testPerformance).toDelegate);
 		//foreach(i;0..1000)
 		callAndWait!(UnDel)((&testPerformanceMatrix).toDelegate);
@@ -221,6 +227,7 @@ void test(uint threadsNum=16){
 			assert(jobManager.debugHelper.jobsDone==jobsRun+1);
 			assert(jobManager.debugHelper.fibersAdded==jobsRun+2);
 			assert(jobManager.debugHelper.fibersDone==jobsRun+2);
+		}
 		}
 	}
 	jobManager.startMainLoop(&startTest,threadsNum);
